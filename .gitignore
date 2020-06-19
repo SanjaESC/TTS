@@ -128,3 +128,5 @@ tests/outputs/*
 TODO.txt
 .vscode/*
 data/*
+Trainings/
+computed/
