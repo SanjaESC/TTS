@@ -37,16 +37,18 @@ def numpy_to_tf(np_array, dtype):
     return tensor
 
 
-def compute_style_mel(style_wav, ap):
-    style_mel = ap.melspectrogram(
-        ap.load_wav(style_wav)).expand_dims(0)
+def compute_style_mel(style_wav, ap, cuda=False):
+    style_mel = torch.FloatTensor(ap.melspectrogram(
+        ap.load_wav(style_wav))).unsqueeze(0)  
+    if cuda:
+        return style_mel.cuda()
     return style_mel
 
 
 def run_model_torch(model, inputs, CONFIG, truncated, speaker_id=None, style_mel=None):
     if CONFIG.use_gst:
         decoder_output, postnet_output, alignments, stop_tokens = model.inference(
-            inputs, style_mel=style_mel, speaker_ids=speaker_id)
+            inputs, input_style=style_mel, speaker_ids=speaker_id)
     else:
         if truncated:
             decoder_output, postnet_output, alignments, stop_tokens = model.inference_truncated(
@@ -98,10 +100,12 @@ def inv_spectrogram(postnet_output, ap, CONFIG):
     return wav
 
 
-def id_to_torch(speaker_id):
+def id_to_torch(speaker_id, cuda=False):
     if speaker_id is not None:
         speaker_id = np.asarray(speaker_id)
         speaker_id = torch.from_numpy(speaker_id).unsqueeze(0)
+    if cuda:
+        return speaker_id.cuda()
     return speaker_id
 
 
@@ -129,7 +133,7 @@ def synthesis(model,
               use_cuda,
               ap,
               speaker_id=None,
-              style_wav=None,
+              style_input=None,
               truncated=False,
               enable_eos_bos_chars=False, #pylint: disable=unused-argument
               use_griffin_lim=False,
@@ -145,7 +149,7 @@ def synthesis(model,
             ap (TTS.utils.audio.AudioProcessor): audio processor to process
                 model outputs.
             speaker_id (int): id of speaker
-            style_wav (str): Uses for style embedding of GST.
+            style_input (str): Uses for style embedding of GST.
             truncated (bool): keep model states after inference. It can be used
                 for continuous inference at long texts.
             enable_eos_bos_chars (bool): enable special chars for end of sentence and start of sentence.
@@ -154,14 +158,19 @@ def synthesis(model,
     """
     # GST processing
     style_mel = None
-    if CONFIG.model == "TacotronGST" and style_wav is not None:
-        style_mel = compute_style_mel(style_wav, ap)
+    if CONFIG.use_gst and style_input is not None:
+        if isinstance(style_input, dict):
+            style_mel = style_input
+        else:
+            style_mel = compute_style_mel(style_input, ap, cuda=use_cuda)
     # preprocess the given text
     inputs = text_to_seqvec(text, CONFIG)
     # pass tensors to backend
     if backend == 'torch':
-        speaker_id = id_to_torch(speaker_id)
-        style_mel = numpy_to_torch(style_mel, torch.float, cuda=use_cuda)
+        if speaker_id is not None:
+            speaker_id = id_to_torch(speaker_id, cuda=use_cuda)
+        if not isinstance(style_mel, dict):
+            style_mel = numpy_to_torch(style_mel, torch.float, cuda=use_cuda)
         inputs = numpy_to_torch(inputs, torch.long, cuda=use_cuda)
         inputs = inputs.unsqueeze(0)
     else:

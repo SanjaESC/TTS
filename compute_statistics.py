@@ -8,7 +8,7 @@ import numpy as np
 from tqdm import tqdm
 
 from TTS.datasets.preprocess import load_meta_data
-from TTS.utils.generic_utils import load_config
+from TTS.utils.io import load_config
 from TTS.utils.audio import AudioProcessor
 
 def main():
@@ -72,6 +72,7 @@ def main():
     del CONFIG.audio['symmetric_norm']
     del CONFIG.audio['clip_norm']
     stats['audio_config'] = CONFIG.audio
+    print(stats)
     np.save(output_file_path, stats, allow_pickle=True)
 
 

@@ -27,7 +27,7 @@ def tts(model,
     t_1 = time.time()
     use_vocoder_model = vocoder_model is not None
     waveform, alignment, _, postnet_output, stop_tokens, _ = synthesis(
-        model, text, C, use_cuda, ap, speaker_id, style_wav=False,
+        model, text, C, use_cuda, ap, speaker_id, style_input=C.style_wav_for_test,
         truncated=False, enable_eos_bos_chars=C.enable_eos_bos_chars,
         use_griffin_lim=(not use_vocoder_model), do_trim_silence=True)
 
@@ -103,7 +103,7 @@ if __name__ == "__main__":
 
     # load the config
     C = load_config(args.config_path)
-    C.forward_attn_mask = True
+    #C.forward_attn_mask = True
 
     # load the audio processor
     ap = AudioProcessor(**C.audio)

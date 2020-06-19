@@ -73,22 +73,30 @@ def split_dataset(items):
     is_multi_speaker = False
     speakers = [item[-1] for item in items]
     is_multi_speaker = len(set(speakers)) > 1
-    eval_split_size = 500 if len(items) * 0.01 > 500 else int(
-        len(items) * 0.01)
+    eval_split_size = 500 if len(items) * 0.02 > 500 else int(
+        len(items) * 0.02)
     np.random.seed(0)
     np.random.shuffle(items)
     if is_multi_speaker:
-        items_eval = []
-        # most stupid code ever -- Fix it !
-        while len(items_eval) < eval_split_size:
-            speakers = [item[-1] for item in items]
-            speaker_counter = Counter(speakers)
-            item_idx = np.random.randint(0, len(items))
-            if speaker_counter[items[item_idx][-1]] > 1:
-                items_eval.append(items[item_idx])
-                del items[item_idx]
-        return items_eval, items
-    return items[:eval_split_size], items[eval_split_size:]
+        speaker_list = [item[-1] for item in items]
+        speaker_list = set(speaker_list)
+        items_eval, items_train = [], []
+        for speaker in speaker_list:
+            temp_item_list = [item for item in items if speaker is item[-1]]
+            eval_split_size = 500 if len(temp_item_list) * 0.02 > 500 else int(len(temp_item_list) * 0.02)
+            if len(temp_item_list) > 1:
+                temp_eval, temp_train = temp_item_list[ : eval_split_size], temp_item_list[eval_split_size : ]
+                items_eval.extend(temp_eval)
+                items_train.extend(temp_train)
+        speaker_list = [item[-1] for item in items_eval]
+
+        print(f" | Trainset (#): {len(items_train)}")
+        print(f" | Evalset (#): {len(items_eval)}")
+        return items_eval, items_train
+    else:
+        print(f" | Trainset (#): {len(items[eval_split_size:])}")
+        print(f" | Evalset (#): {len(items[:eval_split_size])}")
+        return items[:eval_split_size], items[eval_split_size:]
 
 
 # from https://gist.github.com/jihunchoi/f1434a77df9db1bb337417854b398df1
@@ -148,6 +156,9 @@ def setup_model(num_chars, num_speakers, c):
                         postnet_output_dim=c.audio['num_freq'],
                         decoder_output_dim=c.audio['num_mels'],
                         gst=c.use_gst,
+                        gst_embedding_dim=c.gst['gst_embedding_dim'],
+                        gst_num_heads=c.gst['gst_num_heads'],
+                        gst_style_tokens=c.gst['gst_style_tokens'],
                         memory_size=c.memory_size,
                         attn_type=c.attention_type,
                         attn_win=c.windowing,
@@ -167,6 +178,10 @@ def setup_model(num_chars, num_speakers, c):
                         r=c.r,
                         postnet_output_dim=c.audio['num_mels'],
                         decoder_output_dim=c.audio['num_mels'],
+                        gst=c.use_gst,
+                        gst_embedding_dim=c.gst['gst_embedding_dim'],
+                        gst_num_heads=c.gst['gst_num_heads'],
+                        gst_style_tokens=c.gst['gst_style_tokens'],
                         attn_type=c.attention_type,
                         attn_win=c.windowing,
                         attn_norm=c.attention_norm,
@@ -197,14 +212,19 @@ class KeepAverage():
         self.iters[name] = init_iter
 
     def update_value(self, name, value, weighted_avg=False):
-        if weighted_avg:
-            self.avg_values[name] = 0.99 * self.avg_values[name] + 0.01 * value
-            self.iters[name] += 1
+        if name not in self.avg_values:
+            # add value if not exist before
+            self.add_value(name, init_val=value)
         else:
-            self.avg_values[name] = self.avg_values[name] * \
-                self.iters[name] + value
-            self.iters[name] += 1
-            self.avg_values[name] /= self.iters[name]
+            # else update existing value
+            if weighted_avg:
+                self.avg_values[name] = 0.99 * self.avg_values[name] + 0.01 * value
+                self.iters[name] += 1
+            else:
+                self.avg_values[name] = self.avg_values[name] * \
+                    self.iters[name] + value
+                self.iters[name] += 1
+                self.avg_values[name] /= self.iters[name]
 
     def add_values(self, name_dict):
         for key, value in name_dict.items():
@@ -333,10 +353,16 @@ def check_config(c):
     # paths
     _check_argument('output_path', c, restricted=True, val_type=str)
 
-    # multi-speaker gst
+    # multi-speaker
     _check_argument('use_speaker_embedding', c, restricted=True, val_type=bool)
-    _check_argument('style_wav_for_test', c, restricted=True, val_type=str)
+    
+    # GST
     _check_argument('use_gst', c, restricted=True, val_type=bool)
+    _check_argument('style_wav_for_test', c, restricted=True, val_type=str)
+    _check_argument('gst', c, restricted=True, val_type=dict)
+    _check_argument('gst_embedding_dim', c['gst'], restricted=True, val_type=int, min_val=1)
+    _check_argument('gst_num_heads', c['gst'], restricted=True, val_type=int, min_val=1)
+    _check_argument('gst_style_tokens', c['gst'], restricted=True, val_type=int, min_val=1)
 
     # datasets - checking only the first entry
     _check_argument('datasets', c, restricted=True, val_type=list)

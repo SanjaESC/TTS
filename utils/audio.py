@@ -337,7 +337,6 @@ class AudioProcessor(object):
         x = np.sign(wav) / mu * ((1 + mu) ** np.abs(wav) - 1)
         return x
 
-
     @staticmethod
     def encode_16bits(x):
         return np.clip(x * 2**15, -2**15, 2**15 - 1).astype(np.int16)

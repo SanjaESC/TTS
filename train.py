@@ -4,6 +4,7 @@ import sys
 import glob
 import time
 import traceback
+import random
 
 import numpy as np
 import torch
@@ -182,7 +183,7 @@ def train(model, criterion, optimizer, optimizer_st, scheduler,
                               mel_lengths, decoder_backward_output,
                               alignments, alignment_lengths, text_lengths)
         if c.bidirectional_decoder:
-            keep_avg.update_values({'avg_decoder_b_loss': loss_dict['decoder_backward_loss'].item(),
+            keep_avg.update_values({'avg_decoder_b_loss': loss_dict['decoder_b_loss'].item(),
                                     'avg_decoder_c_loss': loss_dict['decoder_c_loss'].item()})
         if c.ga_alpha > 0:
             keep_avg.update_values({'avg_ga_loss': loss_dict['ga_loss'].item()})
@@ -441,8 +442,14 @@ def evaluate(model, criterion, ap, global_step, epoch):
         test_audios = {}
         test_figures = {}
         print(" | > Synthesizing test sentences")
-        speaker_id = 0 if c.use_speaker_embedding else None
-        style_wav = c.get("style_wav_for_test")
+        if c.use_speaker_embedding:
+            speaker_mapping = load_speaker_mapping(OUT_PATH)
+            speaker_id = random.randrange(0, len(speaker_mapping), 1)
+            speaker_name = [k for k, v in speaker_mapping.items() if v == speaker_id][0]
+            print(f" | - > Using speaker {speaker_name} with ID {speaker_id}")
+        else:
+            speaker_id = None
+        style_wav = {'0': 0.0, '1': 0.0, '2': 0.0, '3': 0.0, '4': 0.0, '5': 0.0, '6': 0.0, '7': 0.0, '8': 0.0, '9': 0.0}
         for idx, test_sentence in enumerate(test_sentences):
             try:
                 wav, alignment, decoder_output, postnet_output, stop_tokens, inputs = synthesis(
@@ -452,7 +459,7 @@ def evaluate(model, criterion, ap, global_step, epoch):
                     use_cuda,
                     ap,
                     speaker_id=speaker_id,
-                    style_wav=style_wav,
+                    style_input=style_wav,
                     truncated=False,
                     enable_eos_bos_chars=c.enable_eos_bos_chars, #pylint: disable=unused-argument
                     use_griffin_lim=True,
@@ -543,6 +550,7 @@ def main(args):  # pylint: disable=redefined-outer-name
             print(" > Partial model initialization.")
             model_dict = model.state_dict()
             model_dict = set_init_dict(model_dict, checkpoint, c)
+            #model_dict = set_init_dict(model_dict, checkpoint['model'], c)
             model.load_state_dict(model_dict)
             del model_dict
         for group in optimizer.param_groups:
@@ -667,7 +675,7 @@ if __name__ == '__main__':
         os.chmod(OUT_PATH, 0o775)
 
         LOG_DIR = OUT_PATH
-        tb_logger = TensorboardLogger(LOG_DIR)
+        tb_logger = TensorboardLogger(LOG_DIR, model_name='TTS')
 
         # write model desc to tensorboard
         tb_logger.tb_add_text('model-description', c['run_description'], 0)
