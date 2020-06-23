@@ -1,9 +1,7 @@
 {
-"github_branch":"* master",
-"restore_path":"Trainings/gothic_tts-June-03-2020_10+12AM-9d7cb1e/checkpoint_450000.pth.tar",
-    "model": "Tacotron2",
-    "run_name": "gothic_tts",
-    "run_description": "tacotron2 multispeaker with gst, gothic dataset",
+"model": "Tacotron2",
+"run_name": "gothic_tts",
+"run_description": "tacotron2 multispeaker(31 speakers) with gst, gothic dataset",
 
     // AUDIO PARAMETERS
     "audio":{
@@ -142,7 +140,7 @@
         [
             {
                 "name": "gothic_tts",
-                "path":  "/media/alexander/LinuxFS/SpeechData/GothicSpeech/NPC_Speech3/",
+                "path":  "/media/alexander/LinuxFS/SpeechData/GothicSpeech/NPC_Speech/",
                 "meta_file_train": null,
                 "meta_file_val": null
             }

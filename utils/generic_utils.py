@@ -83,7 +83,7 @@ def split_dataset(items):
         items_eval, items_train = [], []
         for speaker in speaker_list:
             temp_item_list = [item for item in items if speaker is item[-1]]
-            eval_split_size = 500 if len(temp_item_list) * 0.02 > 500 else int(len(temp_item_list) * 0.02)
+            eval_split_size = 500 if len(temp_item_list) * 0.01 > 500 else int(len(temp_item_list) * 0.01)
             if len(temp_item_list) > 1:
                 temp_eval, temp_train = temp_item_list[ : eval_split_size], temp_item_list[eval_split_size : ]
                 items_eval.extend(temp_eval)

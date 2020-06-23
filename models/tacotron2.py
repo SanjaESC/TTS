@@ -88,7 +88,7 @@ class Tacotron2(nn.Module):
             query = torch.zeros(1, 1, 256).to(device)
             _GST = torch.tanh(self.gst_layer.style_token_layer.style_tokens)
 
-            gst_outputs = torch.zeros([1, 1, 512], dtype=torch.int32, device=device)
+            gst_outputs = torch.zeros(1, 1, 512).to(device)
             for k_token, v_amplifier in style_input.items():
                 key = _GST[int(k_token)].unsqueeze(0).expand(1, -1, -1)
                 gst_outputs_att = self.gst_layer.style_token_layer.attention(query, key)

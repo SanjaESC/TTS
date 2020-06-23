@@ -1,6 +1,7 @@
 WadaSNR/
 .idea/
 *.pyc
+*.npy
 .DS_Store
 ./__init__.py
 # Byte-compiled / optimized / DLL files
