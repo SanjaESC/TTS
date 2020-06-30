@@ -1,6 +1,5 @@
 import os
 import json
-import yaml
 import re
 import torch
 import datetime

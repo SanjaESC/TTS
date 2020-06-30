@@ -54,7 +54,7 @@ class ReferenceEncoder(nn.Module):
             input_size=filters[-1] * post_conv_height,
             hidden_size=embedding_dim // 2,
             batch_first=True)
-
+        
     def forward(self, inputs):
         batch_size = inputs.size(0)
         x = inputs.view(batch_size, 1, -1, self.num_mel)

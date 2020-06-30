@@ -1,0 +1,23 @@
+# MODEL CONFIGURATION
+model: "Tacotron2"                          # Tacotron Model To Use
+run_name: "gothic_tts"                                 # Name Of The Training Run
+run_description: "tacotron2 multispeaker with gst, gothic dataset" # Description Of The Training Run
+
+#########################################
+#           GENERIC SETTINGS            #
+#########################################  
+generic_Settings:
+  !include generic_settings.yaml            # Contains generic settings like audio processing, text processing, logging
+                                            # Settings should be tuned in alignment 
+
+#########################################
+#           NETWORK SETTINGS            #
+#########################################  
+layer_settings:
+  !include layer_settings.yaml
+
+#########################################
+#           MODEL SETTINGS            #
+#########################################  
+model_settings:
+  !include model_settings.yaml

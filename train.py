@@ -21,7 +21,8 @@ from TTS.utils.generic_utils import (count_parameters, create_experiment_folder,
 from TTS.utils.io import (save_best_model, save_checkpoint,
                           load_config, copy_config_file)
 from TTS.utils.training import (NoamLR, check_update, adam_weight_decay,
-                                gradual_training_scheduler, set_weight_decay)
+                                gradual_training_scheduler, set_weight_decay,
+                                setup_torch_training_env)
 from TTS.utils.tensorboard_logger import TensorboardLogger
 from TTS.utils.console_logger import ConsoleLogger
 from TTS.utils.speakers import load_speaker_mapping, save_speaker_mapping, \
@@ -33,13 +34,8 @@ from TTS.datasets.preprocess import load_meta_data
 from TTS.utils.radam import RAdam
 from TTS.utils.measures import alignment_diagonal_score
 
-torch.backends.cudnn.enabled = True
-torch.backends.cudnn.benchmark = False
-torch.manual_seed(54321)
-use_cuda = torch.cuda.is_available()
-num_gpus = torch.cuda.device_count()
-print(" > Using CUDA: ", use_cuda)
-print(" > Number of GPUs: ", num_gpus)
+
+use_cuda, num_gpus = setup_torch_training_env(True, False)
 
 
 def setup_loader(ap, r, is_val=False, verbose=False):
@@ -121,24 +117,10 @@ def format_data(data):
 def train(model, criterion, optimizer, optimizer_st, scheduler,
           ap, global_step, epoch):
     data_loader = setup_loader(ap, model.decoder.r, is_val=False,
-                               verbose=(epoch == 0))
+                            verbose=(epoch == 0))
     model.train()
     epoch_time = 0
-    train_values = {
-        'avg_postnet_loss': 0,
-        'avg_decoder_loss': 0,
-        'avg_stopnet_loss': 0,
-        'avg_align_error': 0,
-        'avg_step_time': 0,
-        'avg_loader_time': 0
-    }
-    if c.bidirectional_decoder:
-        train_values['avg_decoder_b_loss'] = 0  # decoder backward loss
-        train_values['avg_decoder_c_loss'] = 0  # decoder consistency loss
-    if c.ga_alpha > 0:
-        train_values['avg_ga_loss'] = 0  # guidede attention loss
     keep_avg = KeepAverage()
-    keep_avg.add_values(train_values)
     if use_cuda:
         batch_n_iter = int(
             len(data_loader.dataset) / (c.batch_size * num_gpus))
@@ -163,13 +145,14 @@ def train(model, criterion, optimizer, optimizer_st, scheduler,
             optimizer_st.zero_grad()
 
         # forward pass model
-        if c.bidirectional_decoder:
+        if c.bidirectional_decoder or c.double_decoder_consistency:
             decoder_output, postnet_output, alignments, stop_tokens, decoder_backward_output, alignments_backward = model(
-                text_input, text_lengths, mel_input, speaker_ids=speaker_ids)
+                text_input, text_lengths, mel_input, mel_lengths, speaker_ids=speaker_ids)
         else:
             decoder_output, postnet_output, alignments, stop_tokens = model(
-                text_input, text_lengths, mel_input, speaker_ids=speaker_ids)
+                text_input, text_lengths, mel_input, mel_lengths, speaker_ids=speaker_ids)
             decoder_backward_output = None
+            alignments_backward = None
 
         # set the alignment lengths wrt reduction factor for guided attention
         if mel_lengths.max() % model.decoder.r != 0:
@@ -181,12 +164,8 @@ def train(model, criterion, optimizer, optimizer_st, scheduler,
         loss_dict = criterion(postnet_output, decoder_output, mel_input,
                               linear_input, stop_tokens, stop_targets,
                               mel_lengths, decoder_backward_output,
-                              alignments, alignment_lengths, text_lengths)
-        if c.bidirectional_decoder:
-            keep_avg.update_values({'avg_decoder_b_loss': loss_dict['decoder_b_loss'].item(),
-                                    'avg_decoder_c_loss': loss_dict['decoder_c_loss'].item()})
-        if c.ga_alpha > 0:
-            keep_avg.update_values({'avg_ga_loss': loss_dict['ga_loss'].item()})
+                              alignments, alignment_lengths, alignments_backward,
+                              text_lengths)
 
         # backward pass
         loss_dict['loss'].backward()
@@ -196,7 +175,6 @@ def train(model, criterion, optimizer, optimizer_st, scheduler,
 
         # compute alignment error (the lower the better )
         align_error = 1 - alignment_diagonal_score(alignments)
-        keep_avg.update_value('avg_align_error', align_error)
         loss_dict['align_error'] = align_error
 
         # backpass and check the grad norm for stop loss
@@ -211,23 +189,6 @@ def train(model, criterion, optimizer, optimizer_st, scheduler,
         step_time = time.time() - start_time
         epoch_time += step_time
 
-        # update avg stats
-        update_train_values = {
-            'avg_postnet_loss': float(loss_dict['postnet_loss'].item()),
-            'avg_decoder_loss': float(loss_dict['decoder_loss'].item()),
-            'avg_stopnet_loss': loss_dict['stopnet_loss'].item() \
-                if isinstance(loss_dict['stopnet_loss'], float) else float(loss_dict['stopnet_loss'].item()),
-            'avg_step_time': step_time,
-            'avg_loader_time': loader_time
-        }
-        keep_avg.update_values(update_train_values)
-
-        if global_step % c.print_step == 0:
-            c_logger.print_train_step(batch_n_iter, num_iter, global_step,
-                                      avg_spec_length, avg_text_length,
-                                      step_time, loader_time, current_lr,
-                                      loss_dict, keep_avg.avg_values)
-
         # aggregate losses from processes
         if num_gpus > 1:
             loss_dict['postnet_loss'] = reduce_tensor(loss_dict['postnet_loss'].data, num_gpus)
@@ -235,18 +196,41 @@ def train(model, criterion, optimizer, optimizer_st, scheduler,
             loss_dict['loss'] = reduce_tensor(loss_dict['loss'] .data, num_gpus)
             loss_dict['stopnet_loss'] = reduce_tensor(loss_dict['stopnet_loss'].data, num_gpus) if c.stopnet else loss_dict['stopnet_loss']
 
+        # detach loss values
+        loss_dict_new = dict()
+        for key, value in loss_dict.items():
+            if isinstance(value, (int, float)):
+                loss_dict_new[key] = value
+            else:
+                loss_dict_new[key] = value.item()
+        loss_dict = loss_dict_new
+
+        # update avg stats
+        update_train_values = dict()
+        for key, value in loss_dict.items():
+            update_train_values['avg_' + key] = value
+        update_train_values['avg_loader_time'] = loader_time
+        update_train_values['avg_step_time'] = step_time
+        keep_avg.update_values(update_train_values)
+
+        # print training progress
+        if global_step % c.print_step == 0:
+            c_logger.print_train_step(batch_n_iter, num_iter, global_step,
+                                      avg_spec_length, avg_text_length,
+                                      step_time, loader_time, current_lr,
+                                      loss_dict, keep_avg.avg_values)
+
         if args.rank == 0:
             # Plot Training Iter Stats
             # reduce TB load
-            if global_step % 10 == 0:
+            if global_step % c.tb_plot_step == 0:
                 iter_stats = {
-                    "loss_posnet": loss_dict['postnet_loss'].item(),
-                    "loss_decoder": loss_dict['decoder_loss'].item(),
                     "lr": current_lr,
                     "grad_norm": grad_norm,
                     "grad_norm_st": grad_norm_st,
                     "step_time": step_time
                 }
+                iter_stats.update(loss_dict)
                 tb_logger.tb_train_iter_stats(global_step, iter_stats)
 
             if global_step % c.save_step == 0:
@@ -254,7 +238,7 @@ def train(model, criterion, optimizer, optimizer_st, scheduler,
                     # save model
                     save_checkpoint(model, optimizer, global_step, epoch, model.decoder.r, OUT_PATH,
                                     optimizer_st=optimizer_st,
-                                    model_loss=loss_dict['postnet_loss'].item())
+                                    model_loss=loss_dict['postnet_loss'])
 
                 # Diagnostic visualizations
                 const_spec = postnet_output[0].data.cpu().numpy()
@@ -269,7 +253,7 @@ def train(model, criterion, optimizer, optimizer_st, scheduler,
                     "alignment": plot_alignment(align_img),
                 }
 
-                if c.bidirectional_decoder:
+                if c.bidirectional_decoder or c.double_decoder_consistency:
                     figures["alignment_backward"] = plot_alignment(alignments_backward[0].data.cpu().numpy())
 
                 tb_logger.tb_train_figures(global_step, figures)
@@ -289,41 +273,20 @@ def train(model, criterion, optimizer, optimizer_st, scheduler,
 
     # Plot Epoch Stats
     if args.rank == 0:
-        # Plot Training Epoch Stats
-        epoch_stats = {
-            "loss_postnet": keep_avg['avg_postnet_loss'],
-            "loss_decoder": keep_avg['avg_decoder_loss'],
-            "stopnet_loss": keep_avg['avg_stopnet_loss'],
-            "alignment_score": keep_avg['avg_align_error'],
-            "epoch_time": epoch_time
-        }
-        if c.ga_alpha > 0:
-            epoch_stats['guided_attention_loss'] = keep_avg['avg_ga_loss']
+        epoch_stats = {"epoch_time": epoch_time}
+        epoch_stats.update(keep_avg.avg_values)
         tb_logger.tb_train_epoch_stats(global_step, epoch_stats)
         if c.tb_model_param_stats:
             tb_logger.tb_model_weights(model, global_step)
     return keep_avg.avg_values, global_step
 
-
+    
 @torch.no_grad()
 def evaluate(model, criterion, ap, global_step, epoch):
     data_loader = setup_loader(ap, model.decoder.r, is_val=True)
     model.eval()
     epoch_time = 0
-    eval_values_dict = {
-        'avg_postnet_loss': 0,
-        'avg_decoder_loss': 0,
-        'avg_stopnet_loss': 0,
-        'avg_align_error': 0
-    }
-    if c.bidirectional_decoder:
-        eval_values_dict['avg_decoder_b_loss'] = 0  # decoder backward loss
-        eval_values_dict['avg_decoder_c_loss'] = 0  # decoder consistency loss
-    if c.ga_alpha > 0:
-        eval_values_dict['avg_ga_loss'] = 0  # guidede attention loss
     keep_avg = KeepAverage()
-    keep_avg.add_values(eval_values_dict)
-
     c_logger.print_eval_start()
     if data_loader is not None:
         for num_iter, data in enumerate(data_loader):
@@ -334,13 +297,14 @@ def evaluate(model, criterion, ap, global_step, epoch):
             assert mel_input.shape[1] % model.decoder.r == 0
 
             # forward pass model
-            if c.bidirectional_decoder:
+            if c.bidirectional_decoder or c.double_decoder_consistency:
                 decoder_output, postnet_output, alignments, stop_tokens, decoder_backward_output, alignments_backward = model(
                     text_input, text_lengths, mel_input, speaker_ids=speaker_ids)
             else:
                 decoder_output, postnet_output, alignments, stop_tokens = model(
                     text_input, text_lengths, mel_input, speaker_ids=speaker_ids)
                 decoder_backward_output = None
+                alignments_backward = None
 
             # set the alignment lengths wrt reduction factor for guided attention
             if mel_lengths.max() % model.decoder.r != 0:
@@ -352,12 +316,8 @@ def evaluate(model, criterion, ap, global_step, epoch):
             loss_dict = criterion(postnet_output, decoder_output, mel_input,
                                   linear_input, stop_tokens, stop_targets,
                                   mel_lengths, decoder_backward_output,
-                                  alignments, alignment_lengths, text_lengths)
-            if c.bidirectional_decoder:
-                keep_avg.update_values({'avg_decoder_b_loss': loss_dict['decoder_b_loss'].item(),
-                                        'avg_decoder_c_loss': loss_dict['decoder_c_loss'].item()})
-            if c.ga_alpha > 0:
-                keep_avg.update_values({'avg_ga_loss': loss_dict['ga_loss'].item()})
+                                  alignments, alignment_lengths, alignments_backward,
+                                  text_lengths)
 
             # step time
             step_time = time.time() - start_time
@@ -365,7 +325,7 @@ def evaluate(model, criterion, ap, global_step, epoch):
 
             # compute alignment score
             align_error = 1 - alignment_diagonal_score(alignments)
-            keep_avg.update_value('avg_align_error', align_error)
+            loss_dict['align_error'] = align_error
 
             # aggregate losses from processes
             if num_gpus > 1:
@@ -374,14 +334,20 @@ def evaluate(model, criterion, ap, global_step, epoch):
                 if c.stopnet:
                     loss_dict['stopnet_loss'] = reduce_tensor(loss_dict['stopnet_loss'].data, num_gpus)
 
-            keep_avg.update_values({
-                'avg_postnet_loss':
-                float(loss_dict['postnet_loss'].item()),
-                'avg_decoder_loss':
-                float(loss_dict['decoder_loss'].item()),
-                'avg_stopnet_loss':
-                float(loss_dict['stopnet_loss'].item()),
-            })
+            # detach loss values
+            loss_dict_new = dict()
+            for key, value in loss_dict.items():
+                if isinstance(value, (int, float)):
+                    loss_dict_new[key] = value
+                else:
+                    loss_dict_new[key] = value.item()
+            loss_dict = loss_dict_new
+
+            # update avg stats
+            update_train_values = dict()
+            for key, value in loss_dict.items():
+                update_train_values['avg_' + key] = value
+            keep_avg.update_values(update_train_values)
 
             if c.print_eval:
                 c_logger.print_eval_step(num_iter, loss_dict, keep_avg.avg_values)
@@ -410,20 +376,11 @@ def evaluate(model, criterion, ap, global_step, epoch):
                                      c.audio["sample_rate"])
 
             # Plot Validation Stats
-            epoch_stats = {
-                "loss_postnet": keep_avg['avg_postnet_loss'],
-                "loss_decoder": keep_avg['avg_decoder_loss'],
-                "stopnet_loss": keep_avg['avg_stopnet_loss'],
-                "alignment_score": keep_avg['avg_align_error'],
-            }
 
-            if c.bidirectional_decoder:
-                epoch_stats['loss_decoder_backward'] = keep_avg['avg_decoder_b_loss']
+            if c.bidirectional_decoder or c.double_decoder_consistency:
                 align_b_img = alignments_backward[idx].data.cpu().numpy()
-                eval_figures['alignment_backward'] = plot_alignment(align_b_img)
-            if c.ga_alpha > 0:
-                epoch_stats['guided_attention_loss'] = keep_avg['avg_ga_loss']
-            tb_logger.tb_eval_stats(global_step, epoch_stats)
+                eval_figures['alignment2'] = plot_alignment(align_b_img)
+            tb_logger.tb_eval_stats(global_step, keep_avg.avg_values)
             tb_logger.tb_eval_figures(global_step, eval_figures)
 
     if args.rank == 0 and epoch > c.test_delay_epochs:
@@ -432,7 +389,8 @@ def evaluate(model, criterion, ap, global_step, epoch):
                 "It took me quite a long time to develop a voice, and now that I have it I'm not going to be silent.",
                 "Be a voice, not an echo.",
                 "I'm sorry Dave. I'm afraid I can't do that.",
-                "This cake is great. It's so delicious and moist."
+                "This cake is great. It's so delicious and moist.",
+                "Prior to November 22, 1963."
             ]
         else:
             with open(c.test_sentences_file, "r") as f:
@@ -449,7 +407,7 @@ def evaluate(model, criterion, ap, global_step, epoch):
             print(f" | - > Using speaker {speaker_name} with ID {speaker_id}")
         else:
             speaker_id = None
-        style_wav = {'0': 0.0, '1': 0.0, '2': 0.0, '3': 0.0, '4': 0.0, '5': 0.0, '6': 0.0, '7': 0.0, '8': 0.0, '9': 0.0}
+        style_input = {'0': 0.0, '1': 0.0, '2': 0.0, '3': 0.0, '4': 0.0, '5': 0.0, '6': 0.0, '7': 0.0, '8': 0.0, '9': 0.0}
         for idx, test_sentence in enumerate(test_sentences):
             try:
                 wav, alignment, decoder_output, postnet_output, stop_tokens, inputs = synthesis(
@@ -459,7 +417,7 @@ def evaluate(model, criterion, ap, global_step, epoch):
                     use_cuda,
                     ap,
                     speaker_id=speaker_id,
-                    style_input=style_wav,
+                    style_input=style_input,
                     truncated=False,
                     enable_eos_bos_chars=c.enable_eos_bos_chars, #pylint: disable=unused-argument
                     use_griffin_lim=True,
@@ -523,8 +481,6 @@ def main(args):  # pylint: disable=redefined-outer-name
 
     model = setup_model(num_chars, num_speakers, c)
 
-    print(" | > Num output units : {}".format(ap.num_freq), flush=True)
-
     params = set_weight_decay(model, c.wd)
     optimizer = RAdam(params, lr=c.lr, weight_decay=0)
     if c.stopnet and c.separate_stopnet:
@@ -549,8 +505,8 @@ def main(args):  # pylint: disable=redefined-outer-name
         except:
             print(" > Partial model initialization.")
             model_dict = model.state_dict()
-            model_dict = set_init_dict(model_dict, checkpoint, c)
-            #model_dict = set_init_dict(model_dict, checkpoint['model'], c)
+            #model_dict = set_init_dict(model_dict, checkpoint, c)
+            model_dict = set_init_dict(model_dict, checkpoint['model'], c)
             model.load_state_dict(model_dict)
             del model_dict
         for group in optimizer.param_groups:
@@ -593,7 +549,6 @@ def main(args):  # pylint: disable=redefined-outer-name
             if c.bidirectional_decoder:
                 model.decoder_backward.set_r(r)
             print("\n > Number of output frames:", model.decoder.r)
-
         train_avg_loss_dict, global_step = train(model, criterion, optimizer,
                                                  optimizer_st, scheduler, ap,
                                                  global_step, epoch)

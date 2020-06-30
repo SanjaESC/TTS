@@ -63,6 +63,11 @@ def main():
     stats['linear_mean'] = linear_mean
     stats['linear_std'] = linear_scale
 
+    print(f' > Avg mel spec mean: {mel_mean.mean()}')
+    print(f' > Avg mel spec scale: {mel_scale.mean()}')
+    print(f' > Avg linear spec mean: {linear_mean.mean()}')
+    print(f' > Avg lienar spec scale: {linear_scale.mean()}')
+
     # set default config values for mean-var scaling
     CONFIG.audio['stats_path'] = output_file_path
     CONFIG.audio['signal_norm'] = True
@@ -72,8 +77,8 @@ def main():
     del CONFIG.audio['symmetric_norm']
     del CONFIG.audio['clip_norm']
     stats['audio_config'] = CONFIG.audio
-    print(stats)
     np.save(output_file_path, stats, allow_pickle=True)
+    print(f' > scale_stats.npy is saved to {output_file_path}')
 
 
 if __name__ == "__main__":

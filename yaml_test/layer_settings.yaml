@@ -1,0 +1,23 @@
+# ATTENTION
+attention_params:
+  attention_type: original      # 'original' or 'graves'
+  attention_heads: 4            # number of attention heads (only for 'graves')
+  attention_norm: sigmoid       # softmax or sigmoid. Suggested to use softmax for Tacotron2 and sigmoid for Tacotron.
+  windowing: false              # Enables attention windowing. Used only in eval mode.
+  use_forward_attn: true        # if it uses forward attention. In general, it aligns faster.
+  forward_attn_mask: false      # Additional masking forcing monotonicity only in eval mode.
+  transition_agent: false       # enable/disable transition agent of forward attention.
+  location_attn: true           # enable_disable location sensitive attention. It is enabled for TACOTRON by default.
+  bidirectional_decoder: false  # use https:#arxiv.org/abs/1907.09006. Use it, if attention does not work well with your dataset.
+
+
+# TACOTRON NETWORK (PRENET AND STOPNET)
+network_params:
+  # PRENET
+  memory_size: -1               # ONLY TACOTRON - size of the memory queue used fro storing last decoder predictions for auto-regression. If < 0, memory queue is disabled and decoder only uses the last prediction frame.
+  prenet_type: "original"       # original or bn.
+  prenet_dropout: true          # enable/disable dropout at prenet.
+  
+  # STOPNET
+  stopnet: true,                # Train stopnet predicting the end of synthesis.
+  separate_stopnet: true,       # Train stopnet seperately if 'stopnet==true'. It prevents stopnet loss to influence the rest of the model. It causes a better model, but it trains SLOWER.

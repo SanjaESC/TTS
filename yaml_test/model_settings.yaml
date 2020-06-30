@@ -1,0 +1,91 @@
+# AUDIO PROCESSING
+audio_params:
+ # stft parameters
+ num_freq: 1025         # number of stft frequency levels. Size of the linear spectogram frame.
+ win_length: 1024       # stft window length in ms.
+ hop_length: 256        # stft window hop-lengh in ms.
+ frame_length_ms: null  # stft window length in ms.If null, 'win_length' is used.
+ frame_shift_ms: null   # stft window hop-lengh in ms. If null, 'hop_length' is used.
+
+ # Audio processing parameters
+ sample_rate: 22050     # DATASET-RELATED wav sample-rate. If different than the original data, it is resampled.
+ preemphasis: 0.98      # pre-emphasis to reduce spec noise and make it more structured. If 0.0, no -pre-emphasis.
+ ref_level_db: 20       # reference level db, theoretically 20db is the sound of air.
+
+ # Silence trimming
+ do_trim_silence: true  # enable trimming of slience of audio as you load it. LJspeech (false), TWEB (false), Nancy (true)
+ trim_db: 60            # threshold for timming silence. Set this according to your dataset.
+
+ # Griffin-Lim
+ power: 1.5             # value to sharpen wav signals after GL algorithm.
+ griffin_lim_iters: 60  # #griffin-lim iterations. 30-60 is a good range. Larger the value, slower the generation.
+
+ # MelSpectrogram parameters
+ num_mels: 80           # size of the mel spec frame.
+ mel_fmin: 40.0         # minimum freq level for mel-spec. ~50 for male and ~95 for female voices. Tune for dataset!!
+ mel_fmax: 8000.0       # maximum freq level for mel-spec. Tune for dataset!!
+ 
+ # Normalization parameters
+ signal_norm: true      # normalize spec values. Mean-Var normalization if 'stats_path' is defined otherwise range normalization defined by the other params.
+ min_level_db: -100     # lower bound for normalization
+ symmetric_norm: true   # move normalization to range [-1, 1]
+ max_norm: 4.0          # scale normalization to range [-max_norm, max_norm] or [0, max_norm]
+ clip_norm: true        # clip normalized values into the range.
+ stats_path: null       # DO NOT USE WITH MULTI_SPEAKER MODEL. scaler stats file computed by 'compute_statistics.py'. 
+                        # If it is defined, mean-std based notmalization is used and other normalization params are ignored
+
+# DISTRIBUTED TRAINING
+distributed:
+  backend: "nccl"
+  url: 'tcp:\/\/localhost:54321'
+
+
+# TRAINING
+training_params:
+  model: "Tacotron2"            # Model to train. Currently supported models are [Tacotron, Tacotron2]
+  batch_size: 32                # Batch size for training. Lower values than 32 might cause hard to learn attention. It is overwritten by 'gradual_training'.
+  eval_batch_size: 16           # Batch size for evaluation.
+  r: 7                          # Number of decoder frames to predict per iteration. Set the initial values if gradual training is enabled.      
+  gradual_training: [           # Set gradual training steps: [first_step, r, batch_size]                   
+    [     0, 7, 32],            # If it is null, gradual training is disabled.
+    [     1, 5, 32],            # For Tacotron, you might need to reduce the 'batch_size' as you proceeed.
+    [ 50000, 3, 32], 
+    [130000, 2, 16], 
+    [450000, 1, 16]
+  ]
+  loss_masking: true            # Enable / disable loss masking against the sequence padding.
+  ga_alpha: 0.0                 # Weight for guided attention loss. If > 0, guided attention is enabled.
+  reinit_layers: []             # Give a list of layer names to restore from the given checkpoint. 
+                                # If not defined, it reloads all heuristically matching layers.
+
+# VALIDATION
+validation_params:
+  run_eval: true
+  test_delay_epochs: 50         # Until attention is aligned, testing only wastes computation time.
+  test_sentences_file: "/media/alexander/LinuxFS/Documents/PycharmProjects/TTS/sentences_de.txt"  # Set a file to load sentences to be used for testing. 
+                                                                                                  # If it is null then we use default english sentences.
+
+# OPTIMIZER
+optimizer_params:
+  noam_schedule: false          # Use noam warmup and lr schedule.
+  grad_clip: 1.0                # Upper limit for gradients for clipping.
+  epochs: 1000                  # Total number of epochs to train.
+  lr: 0.0001                    # Initial learning rate. If Noam decay is active, maximum learning rate.
+  wd: 0.000001                  # Weight decay weight.
+  warmup_steps: 4000            # Noam decay steps to increase the learning rate from 0 to lr
+  seq_len_norm: false           # Normalize eash sample loss with its length to alleviate imbalanced datasets. Use it if your dataset is small or has skewed distribution of sequence lengths.
+
+
+# MULTI-SPEAKER
+multispeaker_params: 
+  use_speaker_embedding: true    # Use speaker embedding to enable multi-speaker learning.
+  speaker_embedding_dim: 512
+
+
+# GLOBAL STYLE TOKENS          
+gst_params:
+  use_gst: true                 # Use global style tokens
+  gst_embedding_dim: 512        # Size of the global style token dimension
+  gst_num_heads: 8              # Number of attention heads to use
+  gst_style_tokens: 10          # Number of style tokens to use
+  style_wav_for_test: null      # Path to style wav file to be used in Tacotron inference.
