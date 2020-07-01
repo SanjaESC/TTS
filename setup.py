@@ -19,7 +19,7 @@ args, unknown_args = parser.parse_known_args()
 # Remove our arguments from argv so that setuptools doesn't see them
 sys.argv = [sys.argv[0]] + unknown_args
 
-version = '0.0.2'
+version = '0.0.3'
 
 # Adapted from https://github.com/pytorch/pytorch
 cwd = os.path.dirname(os.path.abspath(__file__))
@@ -92,7 +92,7 @@ setup(
     },
     install_requires=[
         "scipy>=0.19.0",
-        "torch>=0.4.1",
+        "torch>=1.5",
         "numpy>=1.16.0",
         "librosa==0.6.2",
         "unidecode==0.4.20",
