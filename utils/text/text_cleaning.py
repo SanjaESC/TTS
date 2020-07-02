@@ -4,6 +4,8 @@ import re
 
 import num2words
 
+# Taken from https://github.com/AASHISHAG/deepspeech-german/blob/master/pre-processing/text_cleaning.py
+
 #
 #   Number patterns
 #
