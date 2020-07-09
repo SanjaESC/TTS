@@ -19,8 +19,7 @@ from TTS.utils.io import load_config, load_checkpoint
 from TTS.utils.text.symbols import make_symbols, symbols, phonemes
 from TTS.utils.audio import AudioProcessor
 from TTS.utils.text.text_cleaning import clean_sentence
-
-#from TTS_lib.vocoder.utils.generic_utils import setup_generator 
+from TTS.vocoder.utils.generic_utils import setup_generator 
 
 
 def tts(model,
@@ -52,7 +51,8 @@ def tts(model,
         waveform = vocoder_model.inference(vocoder_input)
         if use_cuda:
             waveform = waveform.cpu()
-        waveform = waveform.detach().numpy()
+        #waveform = waveform.detach().numpy()
+        waveform = waveform.numpy()
         waveform = waveform.flatten()
         
 
@@ -72,13 +72,15 @@ def tts(model,
 def load_melgan(lib_path, model_file, model_config, use_cuda):
     sys.path.append(lib_path) # set this if ParallelWaveGAN is not installed globally
     #pylint: disable=import-outside-toplevel
-    C = load_config(model_config)
-    model_gen = setup_generator(C)
+    vocoder_config = load_config(model_config)
+    vocoder_model = setup_generator(vocoder_config)
     checkpoint = torch.load(model_file, map_location='cpu')
-    model_gen.load_state_dict(checkpoint['model'])
-    ap_vocoder = AudioProcessor(**C.audio)
+    vocoder_model.load_state_dict(checkpoint['model'])
+    vocoder_model.remove_weight_norm()
+    vocoder_model.inference_padding = 0
+    ap_vocoder = AudioProcessor(**vocoder_config['audio'])
 
-    return model_gen.eval(), ap_vocoder
+    return vocoder_model.eval(), ap_vocoder
 
 
 def split_into_sentences(text):
@@ -126,9 +128,9 @@ def main(**kwargs):
             style_input = style_dict
         else:
             if speaker_name != 'Default':
-                prosody_waves = glob(str(Path(C.datasets[0]['path']+speaker_name+'/*/*.wav')))
+                prosody_waves = glob(str(Path(C.datasets[0]['path'], speaker_name, '/*/*.wav')))
             else:
-                prosody_waves = glob(str(Path(C.datasets[0]['path']+'/*/*.wav')))
+                prosody_waves = glob(str(Path(C.datasets[0]['path'], '/*/*.wav')))
             style_wav_id = random.randrange(0, len(prosody_waves), 1)
             style_input = prosody_waves[style_wav_id]
     else:
@@ -154,7 +156,7 @@ def main(**kwargs):
 
     # find the tts model file in project folder
     try:
-        tts_model_file = glob(str(Path(project + '/*.pth.tar')))
+        tts_model_file = glob(str(Path(project, '*.pth.tar')))
         if not tts_model_file:
             raise FileNotFoundError('[!] TTS Model not found in path: "{}"'.format(project))
         model_path = tts_model_file[0]
@@ -166,7 +168,7 @@ def main(**kwargs):
     model = setup_model(num_chars, num_speakers, C)
 
     # if gpu is not available use cpu
-    model, _ = load_checkpoint(model, model_path, use_cuda=use_cuda)
+    model, state = load_checkpoint(model, model_path, use_cuda=use_cuda)
     # if not use_cuda:
     #     cp = torch.load(model_path, map_location=torch.device('cpu'))
     # else:
@@ -177,6 +179,7 @@ def main(**kwargs):
     model.decoder.max_decoder_steps = 2000
     
     model.eval()
+    print(' > Model step:', state['step'])
     # if use_cuda:
     #     model.cuda()
     # model.decoder.set_r(cp['r'])
@@ -184,39 +187,34 @@ def main(**kwargs):
     # load vocoder
     if vocoder_type is 'MelGAN':
         try:
-            model_file = glob(str(Path("/media/alexander/LinuxFS/Documents/PycharmProjects/GothicTTS/TTS_lib/vocoder/Trainings/multiband-melgan-rwd-Juni-15-2020_02+07-9d7cb1e/*.pth.tar")))
+            model_file = glob(str(Path(project, 'vocoder/*.pth.tar')))
+            print(model_file[0])
+            vocoder, ap_vocoder = load_melgan(str(Path('TTS')),
+                                              str(model_file[0]),
+                                              str(Path(project, 'vocoder/config.json')),
+                                              use_cuda)
+        except FileNotFoundError:
             if not model_file:
                 raise FileNotFoundError('[!] Vocoder Model not found in path: "{}"'.format(project))
-            print(model_file[0])
-            vocoder, ap_vocoder = load_melgan(str(Path('TTS_lib')), 
-            str(model_file[0]), 
-            str("/media/alexander/LinuxFS/Documents/PycharmProjects/GothicTTS/TTS_lib/vocoder/Trainings/multiband-melgan-rwd-Juni-15-2020_02+07-9d7cb1e/config.json"), 
-            use_cuda)
-        except FileNotFoundError:
-            raise
-            
+
     elif vocoder_type is 'WaveRNN':
         try:
-            model_file = glob(str(Path(project + '/*.pkl')))
+            model_file = glob(str(Path(project, '*.pkl')))
+            vocoder, ap_vocoder = load_melgan(str(Path('TTS')), str(model_file[0]), str(Path(project, 'config.yml')), use_cuda)
+        except FileNotFoundError:
             if not model_file:
                 raise FileNotFoundError('[!] Vocoder Model not found in path: "{}"'.format(project))
-            vocoder, ap_vocoder = load_melgan(str(Path('TTS_lib')), str(model_file[0]), str(Path(project + '/config.yml')), use_cuda)
-        except FileNotFoundError:
-            raise
     else:
         vocoder, ap_vocoder = None, None
 
     print(" > Vocoder: {}".format(vocoder_type))
+    print(' > Using style input: {}\n'.format(style_input))
 
-    # if files with sentences was passed -> read them
     if sentence_file != '':
         with open(sentence_file, "r", encoding='utf8') as f:
             list_of_sentences = [s.strip() for s in f.readlines()]
     else:
         list_of_sentences = [text.strip()]
-
-    print(' > Using style input: {}\n'.format(style_input))
-
 
     # iterate over every passed sentence and synthesize
     for _, tts_sentence in enumerate(list_of_sentences):

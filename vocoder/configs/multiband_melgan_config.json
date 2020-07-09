@@ -90,7 +90,7 @@
     },
 
     // DATASET
-    "data_path": "/media/alexander/LinuxFS/SpeechData/GothicSpeech/DialogSpeechFull/wavs/",
+    "data_path": "/media/alexander/LinuxFS/Documents/PycharmProjects/TTS/vocoder/training_set.csv",
     "feature_path": null,
     "seq_len": 16384,
     "pad_short": 2000,
@@ -139,6 +139,6 @@
     "eval_split_size": 500,
 
     // PATHS
-    "output_path": "/home/erogol/Models/LJSpeech/"
+    "output_path": "/media/alexander/LinuxFS/Documents/PycharmProjects/TTS/vocoder/Trainings"
 }
 

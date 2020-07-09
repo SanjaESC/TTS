@@ -2,6 +2,7 @@ WadaSNR/
 .idea/
 *.pyc
 *.npy
+*.csv
 .DS_Store
 ./__init__.py
 # Byte-compiled / optimized / DLL files
@@ -21,6 +22,7 @@ downloads/
 eggs/
 .eggs/
 lib/
+yaml-test/
 lib64/
 parts/
 sdist/

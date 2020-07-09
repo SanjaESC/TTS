@@ -6,29 +6,27 @@ import json
 from glob import glob
 from pathlib import Path
 import os, subprocess, platform
-import webbrowser
-import random
-import logging
 from datetime import date, time
 
 # Global Variables
 status = False
+stop_threads = False
 _platform = platform.system()
 version = '0.0.2'
 
-
-def synthesize_tts(text, 
-                   use_cuda, 
-                   use_gst, 
-                   style_input, 
-                   project, 
-                   speaker_config, 
-                   speaker_list, 
-                   vocoder_type, 
+def synthesize_tts(text,
+                   use_cuda,
+                   use_gst,
+                   style_input,
+                   project,
+                   speaker_config,
+                   speaker_list,
+                   vocoder_type,
                    sentence_file):
-    
-    global status
+    global status, stop_threads
     for speaker in speaker_list:
+        if stop_threads:
+            break
         synthesize.main(text=text,
                         use_cuda=use_cuda,
                         use_gst=use_gst,
@@ -39,7 +37,7 @@ def synthesize_tts(text,
                         vocoder=vocoder_type,
                         sentence_file=sentence_file)
 
-    status = True
+    status, stop_threads = True, False
 
 
 def open_output_folder(speaker_path):
@@ -57,7 +55,7 @@ def open_output_folder(speaker_path):
             subprocess.Popen(['xdg-open', str(speaker_path)])
     except FileNotFoundError as er:
         print(er)
-        
+
 
 def get_emotion_weights(selected_emotion):
     """[This function gets a selected emotion as string from the dropdown gui element.]
@@ -77,13 +75,12 @@ def get_emotion_weights(selected_emotion):
         ]
     for emotion in EMOTIONS:
         if selected_emotion in emotion[0]:
-            # 
             return emotion[1]
 
 
 def main_gui():
-    
-    global status
+    # pylint: disable=global-variable-undefined
+    global status, stop_threads
 
     # Variables
     current_date = date.today()
@@ -98,24 +95,21 @@ def main_gui():
     for index, _ in enumerate(range(10)):
         gst_dict[str(index)] = float(0.0)
 
-    # set icon for distro
-    if _platform == 'Windows':
-        icon = PATH_GUI_ICON + '.ico'
-    else:
-        icon = PATH_GUI_ICON + '.png'
-        
+    # set icon depending on distro
+    icon = PATH_GUI_ICON + '.ico' if _platform == 'Windows' else PATH_GUI_ICON + '.png'
+
     # set the theme
     #sg.theme('DarkTeal6')
     sg.theme('CustomTheme') # Custom theme defined at the bottom of the script. This theme can be modified or replaced with default themes, see above.
-    
+
     # init default settings
     radio_keys = {'radioGL': 'GriffinLim', 'radioWR': 'WaveRNN', 'radioMG': 'MelGAN'}
     radio_image_keys = {'radioGL': 'imgradioGL', 'radioWR': 'imgradioWR', 'radioMG': 'imgradioMG'}
     selected_color = ('white', '#273c75')
     active_radio_button = 'radioGL'
-    loadingAnimation = sg.Image(PATH_LOADING_GIF, visible=False, key='loadingAnim', background_color='white')
+    loadingAnimation = sg.Image(filename=LOADING_GIF, size=(10, 1), visible=False, key='loadingAnim', background_color='white')
     use_cuda = sg.Checkbox('Use CUDA?', default=cuda_available, font=('Arial', 11), visible=cuda_available, key='use_cuda')
-    cuda_color =  'green' if cuda_available else 'red'
+    cuda_color = 'green' if cuda_available else 'red'
     cuda_text = '(CUDA Supported)' if cuda_available else '(CUDA Not Supported)'
     generate_button_disabled = False
 
@@ -128,8 +122,7 @@ def main_gui():
         if speakers_file_path.is_file():
             with open(speakers_file_path, 'r') as json_file:
                 speaker_data = json.load(json_file)
-            speaker_list = [speaker for speaker, _ in speaker_data.items()]
-            
+            speaker_list = [speaker for speaker, _ in speaker_data.items()]      
         else:
             speaker_list = ['Default']
     else:
@@ -140,51 +133,46 @@ def main_gui():
         print(f'[!] No model found in projects folder: {PATH_PROJECT}')
 
     max_length_name = len(max(speaker_list, key=len)) + 2
-    
+
     # All the stuff inside your window.
     layout = [
         [sg.Text('Project Settings:', font=('Arial', 12, 'bold'))],
-        [sg.Text(cuda_text, text_color=cuda_color, font=('Arial', 11,'bold')), use_cuda],
-        [sg.Text('Project:', pad=[5, 5], size=(10, 0), justification='left', font=('Arial', 11), key='lblProject'),
+        [sg.Text(cuda_text, text_color=cuda_color, font=('Arial', 11, 'bold')), use_cuda],
+        [sg.Text('Project:', pad=[5, 5], size=(10, 1), justification='left', font=('Arial', 11), key='lblProject'),
          sg.DropDown(project_folder_name, project_folder_name[0], enable_events=True, pad=[5, 5], font=('Arial', 11), key='dbProject')],
-        [sg.Text('Speaker:', pad=[5, 5], size=(10, 0), justification='left', font=('Arial', 11), key='lblSpeaker'), 
-         sg.DropDown(speaker_list, speaker_list[0], size=(max_length_name, None), pad=[5, 5], font=('Arial', 11), key='dbSpeaker'),
+        [sg.Text('Speaker:', pad=[5, 5], size=(10, 1), justification='left', font=('Arial', 11), key='lblSpeaker'), 
+         sg.DropDown(speaker_list, speaker_list[0], size=(max_length_name, 1), pad=[5, 5], font=('Arial', 11), key='dbSpeaker'),
          sg.Checkbox('Generate for all', default=False, font=('Arial', 11), key='create_all')],
-        
+
         [sg.Text('_' * 90)],
-        
+
         [sg.Text('Vocoder Settings:', font=('Arial', 12, 'bold'))],
-        [sg.Image(filename=MEDIA_PATH+'/kcheck.png', pad=(0, 5), key='imgradioGL'),  sg.Button('GriffinLim',pad=((0, 15), 5), key='radioGL'),
-         sg.Image(filename=MEDIA_PATH+'/kleer.png', pad=(0, 5), key='imgradioWR'), sg.Button('WaveRNN', pad=((0, 15), 5), key='radioWR'),
-         sg.Image(filename=MEDIA_PATH+'/kleer.png', pad=(0, 5), key='imgradioMG'), sg.Button('MelGAN', pad=((0, 15), 5),  key='radioMG')
+        [sg.Image(data=CHECK_ICON, pad=(0, 5), key='imgradioGL'),  sg.Button('GriffinLim', size=(12, 1), pad=((0, 15), 5), key='radioGL'),
+         sg.Image(data=UNCHECK_ICON, pad=(0, 5), key='imgradioWR'), sg.Button('WaveRNN', size=(12, 1), pad=((0, 15), 5), key='radioWR'),
+         sg.Image(data=UNCHECK_ICON, pad=(0, 5), key='imgradioMG'), sg.Button('MelGAN', size=(12, 1), pad=((0, 15), 5), key='radioMG')
          ],
 
-        # [sg.Radio('GriffinLim', 0, True, font=('Arial', 11), key='radioGL'),
-        #  sg.Radio('WaveRNN', 0, font=('Arial', 11), key='radioWR'),
-        #  sg.Radio('PwGAN / MelGAN', 0, font=('Arial', 11), key='radioGAN')],
-        
         [sg.Text('_' * 90)],
-        
+
         [sg.Text('Emotion Settings: ', font=('Arial', 12, 'bold'))],
-        [sg.Text('Emotion: ', size=(10, 0), font=('Arial', 11)), sg.DropDown(['Normal', 'Angry', 'Dominant', 'Calm'], 'Normal', font=('Arial', 11), enable_events=True, key='dbEmotion')],
-        [sg.Text('Speed of Speech: ', pad=[5, 5], size=(20, 0), font=('Arial', 11), key='token0'), 
-            sg.Slider(range=(-50,50), default_value=0, size=(30,10), orientation='horizontal', font=('Arial', 8, 'bold'), key='speedSlider')],  
-        [sg.Text('Dominance of Speech: ', pad=[5, 5], size=(20, 0), font=('Arial', 11), key='token1and2'), 
-            sg.Slider(range=(-50,50), default_value=0, size=(30, 10), orientation='horizontal', font=('Arial', 8, 'bold'), key='emotionSlider')],
-        [sg.Text('Tone of Speech: ',  pad=[5, 5], size=(20, 0), font=('Arial', 11), key='token5'), 
-            sg.Slider(range=(-50,50), default_value=0, size=(30, 10), orientation='horizontal', font=('Arial', 8, 'bold'), key='toneSlider')],
+        [sg.Text('Emotion: ', size=(10, 1), font=('Arial', 11)), sg.DropDown(['Normal', 'Angry', 'Dominant', 'Calm'], 'Normal', font=('Arial', 11), enable_events=True, key='dbEmotion')],
+        [sg.Text('Speed of Speech: ', pad=[5, 5], size=(20, 1), font=('Arial', 11), key='token0'),
+         sg.Slider(range=(-50,50), default_value=0, size=(30, 10), orientation='horizontal', font=('Arial', 8, 'bold'), key='speedSlider')],  
+        [sg.Text('Dominance of Speech: ', pad=[5, 5], size=(20, 1), font=('Arial', 11), key='token1and2'),
+         sg.Slider(range=(-50,50), default_value=0, size=(30, 10), orientation='horizontal', font=('Arial', 8, 'bold'), key='emotionSlider')],
+        [sg.Text('Tone of Speech: ',  pad=[5, 5], size=(20, 1), font=('Arial', 11), key='token5'),
+         sg.Slider(range=(-50,50), default_value=0, size=(30, 10), orientation='horizontal', font=('Arial', 8, 'bold'), key='toneSlider')],
 
         [sg.Text('_' * 90)],
-        
-       # [sg.Checkbox('Use file for speech generation', False, font=('Arial', 11, 'bold'), enable_events=True, key='cbLoadFile')],
+
+        # [sg.Checkbox('Use file for speech generation', False, font=('Arial', 11, 'bold'), enable_events=True, key='cbLoadFile')],
         [sg.Text('Use file for speech generation', font=('Arial', 11, 'bold'), key='lblLoadFile'), 
-         sg.Button('Browse', pad=(1, 5), key='btnFileBrowse'), 
-         sg.Button(image_filename=MEDIA_PATH+'/exit.png', pad=(0, 5), visible=False, button_color=('black', '#ff5e5e'), key='btnCloseFileLoad'),],
-        [sg.Text('Or enter a text bellow.', font=('Arial', 11, 'bold'), pad=[5, 5])],
-        [ sg.Multiline('Im Minental versammelt sich eine Armee des Bösen unter der Führung von Drachen! Wir müssen sie aufhalten, so lange wir noch können.', 
-                      size=(65, 6), pad=[5, 5], border_width=1, font=('Arial', 11), text_color=TEXT_COLOR, background_color=TEXTINPUT_BACKGROUND, key='textInput'),
-         sg.Button('Output\nFolder', size=[5, 3], enable_events=True, key='btnOpenOutput')],
-        [sg.Button('Generate', disabled=generate_button_disabled, key='btnGenerate'), sg.Button('Exit', key='btnExit'), loadingAnimation],
+         sg.Button('Browse', size=(8, 1), pad=(1, 5), key='btnFileBrowse'), 
+         sg.Button(image_data=EXIT_ICON, pad=(0, 5), visible=False, button_color=('black', '#ff5e5e'), key='btnCloseFileLoad'),],
+        [ sg.Multiline('Im Minental versammelt sich eine Armee des Bösen unter der Führung von Drachen! Wir müssen sie aufhalten, so lange wir noch können.',
+                       size=(65, 6), pad=[5, 5], border_width=1, font=('Arial', 12), text_color=TEXT_COLOR, background_color=TEXTINPUT_BACKGROUND, key='textInput'),
+         sg.Button('Output\nFolder', size=(5, 3), enable_events=True, key='btnOpenOutput')],
+        [sg.Button('Generate', size=(12, 1), disabled=generate_button_disabled, key='btnGenerate'), sg.Button('Exit', size=(8, 1), key='btnExit'), loadingAnimation]
     ]
 
     # Create the Window
@@ -195,13 +183,13 @@ def main_gui():
     window[active_radio_button].update(button_color=selected_color)
     for key, _ in radio_keys.items():
         window.FindElement(key).Widget.config(activebackground='#273c75', activeforeground='white')
-    
-    
+
+
     # Event Loop to process "events" and get the "values" of the inputs
     while True:
         event, values = window.read(timeout=50)
-        
-        if event in ('btnExit', 'Exit'):  # if user closes window or clicks exit
+
+        if event in ('btnExit', 'Exit', None):  # if user closes window or clicks exit
             break
 
         # if another porject is select, load the corresponding configuration files
@@ -218,7 +206,7 @@ def main_gui():
             else:   
                 window['dbSpeaker'].update(values=["Default"])
                 window['dbSpeaker'].set_size(size=(len("Default"), None))
-                
+
         # select emotion weights from dropdown gui element
         if event in 'dbEmotion':
             emotions = get_emotion_weights(values['dbEmotion'].lower())
@@ -231,15 +219,15 @@ def main_gui():
             window[event].update(button_color=selected_color)
             for key, value in radio_image_keys.items():
                 if key == event:
-                    window[value].update(filename=MEDIA_PATH+'/kcheck.png')
+                    window[value].update(data=CHECK_ICON)
                 else:
-                    window[value].update(filename=MEDIA_PATH+'/kleer.png')
+                    window[value].update(data=UNCHECK_ICON)
             active_radio_button = event
-            
+
         # open a prompt if the user wants to generate speech from an input file, textbox will be disabled
         if event in 'btnFileBrowse':
             path_to_textfile = sg.PopupGetFile('Please select a file or enter the file name', default_path=ROOT_PATH, initial_folder=ROOT_PATH,
-                                    icon='g.ico', no_window=True, keep_on_top=True, file_types=(('Text file', '.txt'),))
+                                               icon='g.ico', no_window=True, keep_on_top=True, file_types=(('Text file', '.txt'),))
             if path_to_textfile:
                 sentence_file = path_to_textfile
                 text_memory = window['textInput'].get()
@@ -251,44 +239,48 @@ def main_gui():
             sentence_file = ''
             window['textInput'].update(disabled=False, background_color=TEXTINPUT_BACKGROUND)
             window['textInput'].update(text_memory)
-            
+
         # open the output folder of the currently selected speaker
         if event in 'btnOpenOutput':
-            if Path(CURRENT_PROJECT_PATH,'output', current_date, values['dbSpeaker']).is_dir():
+            if Path(CURRENT_PROJECT_PATH, 'output', current_date, values['dbSpeaker']).is_dir():
                 speaker_path = Path(CURRENT_PROJECT_PATH, 'output', current_date, values['dbSpeaker'])
                 open_output_folder(speaker_path=speaker_path)
             else:
                 default_path = Path(CURRENT_PROJECT_PATH, 'output')
                 open_output_folder(speaker_path=default_path)
-        
+
+        # stop synthezising speech 
+        if event in 'btnGenerate' and thread:
+            if values['create_all']:
+                stop_threads = True
+  
         # start synthezising speech from the input
         if event in 'btnGenerate' and not thread:
-            print(event)
             text = values['textInput'].replace('\n', '')
-            if text or sentence:       
+            if text or sentence_file:
                 if values['dbSpeaker'] in 'Default':
                     speakers_file = ''
                     speaker_name = "Default"
                 else:
                     speakers_file = Path(CURRENT_PROJECT_PATH, 'speakers.json')
                     speaker_name = values['dbSpeaker']
-                    
+                
+                if values['create_all']:
+                    window['btnGenerate'].update(text='Cancel', button_color=('white', '#ff5e5e'))
                 speaker = speaker_list if values['create_all'] else [speaker_name]
                 vocoder = [val for key, val in radio_keys.items() if active_radio_button == key][0]
-                
+
                 gst_dict['0'] = round(float(values['speedSlider'] / 100), 3)
                 emotion_temp = round(float(values['emotionSlider'] / 100), 3)
                 gst_dict['1'] = emotion_temp
                 if values['emotionSlider'] > 0:
-                    gst_dict['2'] = round(emotion_temp - 0.10 , 3)
+                    gst_dict['2'] = round(emotion_temp - 0.10, 3)
                 elif values['emotionSlider'] < 0:
-                    gst_dict['2'] = round(emotion_temp + 0.10 , 3)
+                    gst_dict['2'] = round(emotion_temp + 0.10, 3)
                 else:
                     gst_dict['2'] = emotion_temp
                 gst_dict['5'] = round(float(values['toneSlider'] / 100), 3)
-                
 
- 
                 # run speech generation in a new thread  
                 thread = threading.Thread(target=synthesize_tts,
                                           args=(text,
@@ -301,44 +293,47 @@ def main_gui():
                                                 str(vocoder),
                                                 sentence_file), daemon=True)
                 thread.start()
-
-                loadingAnimation.Update(filename=PATH_LOADING_GIF, visible=True)
+                loadingAnimation.Update(filename=LOADING_GIF, visible=True)
             else:
                 sg.Popup('Type something into the textbox or select a file to generate speech.', title='Missing input!',
                          line_width=65, icon='g.ico')
                 window['textInput'].SetFocus()
 
- 
         if status:  # If gen process finish -> stop loading.gif and open output folder
             print('Finished')
-            loadingAnimation.Update(filename=PATH_LOADING_GIF, visible=False)
+            loadingAnimation.Update(filename=LOADING_GIF, visible=False)
             if Path(CURRENT_PROJECT_PATH, 'output').is_dir():
                 speaker_path = Path(CURRENT_PROJECT_PATH, 'output', current_date, speaker_name)
                 open_output_folder(speaker_path=speaker_path)
             status = False
-            
-            
+
+
         if thread:  # If thread is running display loading gif
-            loadingAnimation.UpdateAnimation(source=PATH_LOADING_GIF, time_between_frames=100)
+            loadingAnimation.UpdateAnimation(source=LOADING_GIF, time_between_frames=100)
             thread.join(timeout=0)
             if not thread.is_alive():       # the thread finished
-                loadingAnimation.Update(filename=PATH_LOADING_GIF, visible=False)
-                thread = None               # reset variables for next run
+                loadingAnimation.Update(filename=LOADING_GIF, visible=False)
+                window['btnGenerate'].update(text='Generate', button_color=('white', '#40739e'))
+                thread = None               # reset variable for next run
 
     window.close()
 
 
 if __name__ == '__main__':
-    
     # Paths
     ROOT_PATH = os.path.dirname(os.path.abspath(__file__))
     if ROOT_PATH:
         os.chdir(ROOT_PATH)
     MEDIA_PATH = str(Path(ROOT_PATH, "media"))
-    PATH_LOADING_GIF = str(Path(MEDIA_PATH, "loading.gif"))
+    LOADING_GIF = str(Path(MEDIA_PATH, "loading.gif"))
     PATH_GUI_ICON = str(Path(MEDIA_PATH, "g"))
     PATH_PROJECT = str(Path(ROOT_PATH, "Trainings/"))
-    
+
+    # Icons base64 encoded
+    EXIT_ICON = 'iVBORw0KGgoAAAANSUhEUgAAABgAAAAYCAYAAADgdz34AAAABmJLR0QA/wD/AP+gvaeTAAAAtElEQVRIie2VTQ4CIQyFv3gHEo/gQu/hxDMT7yAL9zNzj3ExJTGVASkhLpyXNOGnfa8FUmBHJW7ADCxGm4AhJzA1kEcbcwLRyYqP+EMD2VcoCZyAO3BM7DnAA5caQV2il3kQwnfyIHs+E18UcMBD1p6slaTWzAI626DGTvmaBHQlqcw347u/omIGdD6i7pfc/ZmehUAfRRTx4mMWqMXve9GsMqk1WFv+Jgba/oQRuBoK/We8AFWjkoBMewj/AAAAAElFTkSuQmCC'
+    CHECK_ICON = 'iVBORw0KGgoAAAANSUhEUgAAABgAAAAYCAYAAADgdz34AAAABmJLR0QA/wD/AP+gvaeTAAAAnklEQVRIie2VMQ6AIAxFX7yDxiN5FT2uDu56EB2EiFVSCg4OvoSJ9r+kBIAfIx2wAlvmWlxGlKUgPJRE8UW53PqrgrAkPi9ogN7SYDmDBphc/ZDanyqogdHVzkD7piAWniXoOUbhCccyiT2zYBBBWrhZIAO1cLMArvN+mnmxIJRo4dkCOM9A47V7kNwvn4pVFFpXmPFIR9mfoH44Pzd2G42KEKyvKj8AAAAASUVORK5CYII='
+    UNCHECK_ICON = 'iVBORw0KGgoAAAANSUhEUgAAABgAAAAYCAYAAADgdz34AAAABmJLR0QA/wD/AP+gvaeTAAAAUUlEQVRIiWNgGAUkAg8GBobHDAwM/8nEj6Bm4ASPKDAc2RKcAKaIXIChn4kCw4gCoxaMWjBqwagFg9GCx1Ca3KIa2QyswIOBsjqBYIUzCjAAALrIRhJJbcctAAAAAElFTkSuQmCC'
+
     # Theme settings
     BACKGROUND_COLOR = '#dcdde1'
     TEXT_COLOR = '#24292E'
@@ -346,13 +341,13 @@ if __name__ == '__main__':
     PROGESS_COLOR = '#273c75'
     TEXTINPUT_BACKGROUND = '#f5f6fa'
     sg.LOOK_AND_FEEL_TABLE['CustomTheme'] = {
-                                        'BACKGROUND': BACKGROUND_COLOR,         
-                                        'TEXT': TEXT_COLOR,                     
-                                        'INPUT': TEXTINPUT_BACKGROUND,          
-                                        'TEXT_INPUT': TEXT_COLOR,               
-                                        'SCROLL': PROGESS_COLOR,                
-                                        'BUTTON': ('white', BUTTON_COLOR),      
-                                        'PROGRESS': (PROGESS_COLOR, '#D0D0D0'), 
+                                        'BACKGROUND': BACKGROUND_COLOR,
+                                        'TEXT': TEXT_COLOR,
+                                        'INPUT': TEXTINPUT_BACKGROUND,
+                                        'TEXT_INPUT': TEXT_COLOR,
+                                        'SCROLL': PROGESS_COLOR,
+                                        'BUTTON': ('white', BUTTON_COLOR),
+                                        'PROGRESS': (PROGESS_COLOR, '#D0D0D0'),
                                         'BORDER': 1, 'SLIDER_DEPTH': 2, 'PROGRESS_DEPTH': 0,
                                         }
     main_gui()
