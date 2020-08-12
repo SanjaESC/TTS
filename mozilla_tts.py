@@ -21,23 +21,24 @@ def synthesize_tts(text,
                    use_gst,
                    style_input,
                    project,
-                   speaker_config,
                    speaker_list,
+                   speakers,
                    vocoder_type,
                    sentence_file):
     global status, stop_threads # pylint: disable=global-statement
-    for speaker in speaker_list:
-        if stop_threads:
-            break
-        synthesize.main(text=text,
-                        use_cuda=use_cuda,
-                        use_gst=use_gst,
-                        style_input=style_input,
-                        project=project,
-                        speaker_config=speaker_config,
-                        speaker_name=speaker,
-                        vocoder=vocoder_type,
-                        sentence_file=sentence_file)
+    for idx, speaker in enumerate(speaker_list):
+        if speaker in speakers:
+            print(speakers)
+            if stop_threads:
+                break
+            synthesize.main(text=text,
+                            use_cuda=use_cuda,
+                            use_gst=use_gst,
+                            style_input=style_input,
+                            project=project,
+                            speaker_id=idx,
+                            vocoder=vocoder_type,
+                            sentence_file=sentence_file)
 
     status, stop_threads = True, False
 
@@ -289,7 +290,7 @@ def main_gui():
                                                 True, # use gst
                                                 gst_dict,
                                                 CURRENT_PROJECT_PATH,
-                                                speakers_file,
+                                                speaker_list,
                                                 speaker,
                                                 str(vocoder),
                                                 sentence_file), daemon=True)
