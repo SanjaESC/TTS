@@ -39,7 +39,7 @@ def numpy_to_tf(np_array, dtype):
 
 def compute_style_mel(style_wav, ap, cuda=False):
     style_mel = torch.FloatTensor(ap.melspectrogram(
-        ap.load_wav(style_wav))).unsqueeze(0)  
+        ap.load_wav(style_wav))).unsqueeze(0)
     if cuda:
         return style_mel.cuda()
     return style_mel
@@ -93,7 +93,7 @@ def trim_silence(wav, ap):
 
 
 def inv_spectrogram(postnet_output, ap, CONFIG):
-    if CONFIG.model in ["Tacotron", "TacotronGST"]:
+    if CONFIG.model.lower() in ["tacotron"]:
         wav = ap.inv_spectrogram(postnet_output.T)
     else:
         wav = ap.inv_melspectrogram(postnet_output.T)

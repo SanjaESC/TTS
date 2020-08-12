@@ -29,7 +29,7 @@ class Tacotron(TacotronAbstract):
                  double_decoder_consistency=False,
                  ddc_r=None,
                  gst=False,
-                 gst_embedding_dim=512,
+                 gst_embedding_dim=256,
                  gst_num_heads=4,
                  gst_style_tokens=10,
                  memory_size=5):
@@ -40,7 +40,7 @@ class Tacotron(TacotronAbstract):
                              forward_attn, trans_agent, forward_attn_mask,
                              location_attn, attn_K, separate_stopnet,
                              bidirectional_decoder, double_decoder_consistency,
-                             ddc_r, gst)  
+                             ddc_r, gst)
         decoder_in_features = 512 if num_speakers > 1 else 256
         encoder_in_features = 512 if num_speakers > 1 else 256
         speaker_embedding_dim = 256

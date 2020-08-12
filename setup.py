@@ -75,6 +75,11 @@ setup(
     url='https://github.com/mozilla/TTS',
     description='Text to Speech with Deep Learning',
     license='MPL-2.0',
+    entry_points={
+        'console_scripts': [
+            'tts-server = TTS.server.server:main'
+        ]
+    },
     package_dir={'': 'tts_namespace'},
     packages=find_packages('tts_namespace'),
     package_data={
@@ -101,8 +106,8 @@ setup(
         "matplotlib",
         "Pillow",
         "flask",
-        # "lws",
         "tqdm",
+        "inflect",
         "bokeh==1.4.0",
         "soundfile",
         "phonemizer @ https://github.com/bootphon/phonemizer/tarball/master",

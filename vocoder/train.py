@@ -7,6 +7,7 @@ import traceback
 
 import torch
 from torch.utils.data import DataLoader
+from torch.cuda.amp import GradScaler, autocast
 
 from inspect import signature
 
@@ -19,7 +20,7 @@ from TTS.utils.radam import RAdam
 from TTS.utils.tensorboard_logger import TensorboardLogger
 from TTS.utils.training import setup_torch_training_env
 from TTS.vocoder.datasets.gan_dataset import GANDataset
-from TTS.vocoder.datasets.preprocess import load_wav_data, load_wav_feat_data, load_file_data
+from TTS.vocoder.datasets.preprocess import load_wav_data, load_wav_feat_data
 # from distribute import (DistributedSampler, apply_gradient_allreduce,
 #                         init_distributed, reduce_tensor)
 from TTS.vocoder.layers.losses import DiscriminatorLoss, GeneratorLoss
@@ -84,7 +85,7 @@ def format_data(data):
     return co, x, None, None
 
 
-def train(model_G, criterion_G, optimizer_G, model_D, criterion_D, optimizer_D,
+def train(model_G, criterion_G, optimizer_G, model_D, criterion_D, optimizer_D, scaler_G, scaler_D,
           scheduler_G, scheduler_D, ap, global_step, epoch):
     data_loader = setup_loader(ap, is_val=False, verbose=(epoch == 0))
     model_G.train()
@@ -112,17 +113,18 @@ def train(model_G, criterion_G, optimizer_G, model_D, criterion_D, optimizer_D,
         ##############################
 
         # generator pass
-        y_hat = model_G(c_G)
-        y_hat_sub = None
-        y_G_sub = None
-        y_hat_vis = y_hat  # for visualization
+        with autocast():
+            y_hat = model_G(c_G)
+            y_hat_sub = None
+            y_G_sub = None
+            y_hat_vis = y_hat  # for visualization
 
-        # PQMF formatting
-        if y_hat.shape[1] > 1:
-            y_hat_sub = y_hat
-            y_hat = model_G.pqmf_synthesis(y_hat)
-            y_hat_vis = y_hat
-            y_G_sub = model_G.pqmf_analysis(y_G)
+            # PQMF formatting
+            if y_hat.shape[1] > 1:
+                y_hat_sub = y_hat
+                y_hat = model_G.pqmf_synthesis(y_hat)
+                y_hat_vis = y_hat
+                y_G_sub = model_G.pqmf_analysis(y_G)
 
         if global_step > c.steps_to_start_discriminator:
 
@@ -151,16 +153,22 @@ def train(model_G, criterion_G, optimizer_G, model_D, criterion_D, optimizer_D,
 
         # compute losses
         loss_G_dict = criterion_G(y_hat, y_G, scores_fake, feats_fake,
-                                  feats_real, y_hat_sub, y_G_sub)
+                                feats_real, y_hat_sub, y_G_sub)
         loss_G = loss_G_dict['G_loss']
 
         # optimizer generator
         optimizer_G.zero_grad()
-        loss_G.backward()
+        #loss_G.backward()
+        scaler_G.scale(loss_G).backward()
         if c.gen_clip_grad > 0:
             torch.nn.utils.clip_grad_norm_(model_G.parameters(),
                                            c.gen_clip_grad)
-        optimizer_G.step()
+        #optimizer_G.step()
+        scaler_G.step(optimizer_G)
+
+        # Updates the scale for next iteration.
+        scaler_G.update()
+
         if scheduler_G is not None:
             scheduler_G.step()
 
@@ -174,22 +182,23 @@ def train(model_G, criterion_G, optimizer_G, model_D, criterion_D, optimizer_D,
         ##############################
         # DISCRIMINATOR
         ##############################
-        if global_step >= c.steps_to_start_discriminator:
-            # discriminator pass
-            with torch.no_grad():
-                y_hat = model_G(c_D)
+        with autocast():
+            if global_step >= c.steps_to_start_discriminator:
+                # discriminator pass
+                with torch.no_grad():
+                    y_hat = model_G(c_D)
 
-            # PQMF formatting
-            if y_hat.shape[1] > 1:
-                y_hat = model_G.pqmf_synthesis(y_hat)
+                # PQMF formatting
+                if y_hat.shape[1] > 1:
+                    y_hat = model_G.pqmf_synthesis(y_hat)
 
-            # run D with or without cond. features
-            if len(signature(model_D.forward).parameters) == 2:
-                D_out_fake = model_D(y_hat.detach(), c_D)
-                D_out_real = model_D(y_D, c_D)
-            else:
-                D_out_fake = model_D(y_hat.detach())
-                D_out_real = model_D(y_D)
+                # run D with or without cond. features
+                if len(signature(model_D.forward).parameters) == 2:
+                    D_out_fake = model_D(y_hat.detach(), c_D)
+                    D_out_real = model_D(y_D, c_D)
+                else:
+                    D_out_fake = model_D(y_hat.detach())
+                    D_out_real = model_D(y_D)
 
             # format D outputs
             if isinstance(D_out_fake, tuple):
@@ -208,11 +217,14 @@ def train(model_G, criterion_G, optimizer_G, model_D, criterion_D, optimizer_D,
 
             # optimizer discriminator
             optimizer_D.zero_grad()
-            loss_D.backward()
+            #loss_D.backward()
+            scaler_D.scale(loss_D).backward()
             if c.disc_clip_grad > 0:
                 torch.nn.utils.clip_grad_norm_(model_D.parameters(),
                                                c.disc_clip_grad)
-            optimizer_D.step()
+            # optimizer_D.step()
+            scaler_D.step(optimizer_D)
+            scaler_D.update()
             if scheduler_D is not None:
                 scheduler_D.step()
 
@@ -328,6 +340,7 @@ def evaluate(model_G, criterion_G, model_D, criterion_D, ap, global_step, epoch)
             y_G_sub = model_G.pqmf_analysis(y_G)
 
 
+        scores_fake, feats_fake, feats_real = None, None, None
         if global_step > c.steps_to_start_discriminator:
 
             if len(signature(model_D.forward).parameters) == 2:
@@ -446,8 +459,8 @@ def main(args):  # pylint: disable=redefined-outer-name
         print(f" > Loading features from: {c.feature_path}")
         eval_data, train_data = load_wav_feat_data(c.data_path, c.feature_path, c.eval_split_size)
     else:
-        eval_data, train_data = load_file_data(c.data_path, c.eval_split_size)
-        #eval_data, train_data = load_wav_data(c.data_path, c.eval_split_size)
+        #eval_data, train_data = load_file_data(c.data_path, c.eval_split_size)
+        eval_data, train_data = load_wav_data(c.data_path, c.eval_split_size)
 
     # setup audio processor
     ap = AudioProcessor(**c.audio)
@@ -467,6 +480,9 @@ def main(args):  # pylint: disable=redefined-outer-name
                            lr=c.lr_disc,
                            weight_decay=0)
 
+    scaler_G = GradScaler()
+    scaler_D = GradScaler()
+    
     # schedulers
     scheduler_gen = None
     scheduler_disc = None
@@ -548,7 +564,7 @@ def main(args):  # pylint: disable=redefined-outer-name
     for epoch in range(0, c.epochs):
         c_logger.print_epoch_start(epoch, c.epochs)
         _, global_step = train(model_gen, criterion_gen, optimizer_gen,
-                               model_disc, criterion_disc, optimizer_disc,
+                               model_disc, criterion_disc, optimizer_disc, scaler_G, scaler_D,
                                scheduler_gen, scheduler_disc, ap, global_step,
                                epoch)
         eval_avg_loss_dict = evaluate(model_gen, criterion_gen, model_disc, criterion_disc, ap,

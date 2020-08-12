@@ -22,14 +22,6 @@ def load_wav_data(data_path, eval_split_size):
     return wav_paths[:eval_split_size], wav_paths[eval_split_size:]
 
 
-def load_file_data(data_path, eval_split_size):
-    with open(data_path, 'r') as r_file:
-        training_data = r_file.read().splitlines()
-    np.random.seed(0)
-    np.random.shuffle(training_data)
-    return training_data[:eval_split_size], training_data[eval_split_size:]
-
-
 def load_wav_feat_data(data_path, feat_path, eval_split_size):
     wav_paths = sorted(find_wav_files(data_path))
     feat_paths = sorted(find_feat_files(feat_path))

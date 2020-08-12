@@ -90,7 +90,7 @@
     },
 
     // DATASET
-    "data_path": "/media/alexander/LinuxFS/Documents/PycharmProjects/TTS/vocoder/training_set.csv",
+    "data_path": "/media/alexander/LinuxFS/SpeechData/GothicSpeech/DialogSpeechFull/wavs/",
     "feature_path": null,
     "seq_len": 16384,
     "pad_short": 2000,
