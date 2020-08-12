@@ -138,7 +138,7 @@ class GuidedAttentionLoss(torch.nn.Module):
         max_olen = max(olens)
         ga_masks = torch.zeros((B, max_olen, max_ilen))
         for idx, (ilen, olen) in enumerate(zip(ilens, olens)):
-            ga_masks[idx, :olen, :ilen] = self._make_ga_mask(ilen, olen, self.sigma)
+            ga_masks[idx, :olen, :ilen] = self._make_ga_mask(ilen, olen, self.sigma).to(ga_masks.device)
         return ga_masks
 
     def forward(self, att_ws, ilens, olens):
@@ -225,7 +225,7 @@ class TacotronLoss(torch.nn.Module):
             loss += decoder_b_loss + decoder_c_loss
             return_dict['decoder_b_loss'] = decoder_b_loss
             return_dict['decoder_c_loss'] = decoder_c_loss
-            
+
         # double decoder consistency loss (if enabled)
         if self.config.double_decoder_consistency:
             decoder_b_loss = self.criterion(decoder_b_output, mel_input, output_lens)
@@ -234,7 +234,7 @@ class TacotronLoss(torch.nn.Module):
             loss += decoder_b_loss + attention_c_loss
             return_dict['decoder_coarse_loss'] = decoder_b_loss
             return_dict['decoder_ddc_loss'] = attention_c_loss
-            
+
         # guided attention loss (if enabled)
         if self.config.ga_alpha > 0:
             ga_loss = self.criterion_ga(alignments, input_lens, alignment_lens)
@@ -243,3 +243,4 @@ class TacotronLoss(torch.nn.Module):
 
         return_dict['loss'] = loss
         return return_dict
+

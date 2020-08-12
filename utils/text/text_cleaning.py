@@ -22,6 +22,7 @@ allowed = list("ABCDEFGHIJKLMNOPQRSTUVWXYZÄÖÜabcdefghijklmnopqrstuvwxyzäöü
 #   Replacement characters
 #
 replacer = {
+   # 'ß': 'ss',
     'àáâãåāăąǟǡǻȁȃȧ': 'a',
     'æǣǽ': 'ä',
     'çćĉċč': 'c',

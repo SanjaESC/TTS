@@ -11,7 +11,7 @@ def setup_torch_training_env(cudnn_enable, cudnn_benchmark):
     print(" > Using CUDA: ", use_cuda)
     print(" > Number of GPUs: ", num_gpus)
     return use_cuda, num_gpus
-    
+
 
 def check_update(model, grad_clip, ignore_stopnet=False):
     r'''Check model gradient against unexpected jumps and failures'''

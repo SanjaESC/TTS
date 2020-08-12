@@ -6,11 +6,10 @@ from datetime import datetime, date
 import string
 from glob import glob
 import numpy as np
-import re
 from pathlib import Path
 import sys
-import yaml
 import random
+import argparse
 
 
 from TTS.utils.synthesis import synthesis
@@ -69,17 +68,21 @@ def tts(model,
     return alignment, postnet_output, stop_tokens, waveform
 
 
-def load_melgan(lib_path, model_file, model_config, use_cuda):
+def load_vocoder(lib_path, model_file, model_config, use_cuda):
     sys.path.append(lib_path) # set this if ParallelWaveGAN is not installed globally
     #pylint: disable=import-outside-toplevel
     vocoder_config = load_config(model_config)
     vocoder_model = setup_generator(vocoder_config)
     checkpoint = torch.load(model_file, map_location='cpu')
+    print(' > Model step:', checkpoint['step'])
     vocoder_model.load_state_dict(checkpoint['model'])
     vocoder_model.remove_weight_norm()
     vocoder_model.inference_padding = 0
+    vocoder_config = load_config(model_config)
     ap_vocoder = AudioProcessor(**vocoder_config['audio'])
 
+    if use_cuda:
+        vocoder_model.cuda()
     return vocoder_model.eval(), ap_vocoder
 
 
@@ -93,7 +96,7 @@ def split_into_sentences(text):
 
 
 def main(**kwargs):
-    global symbols, phonemes
+    global symbols, phonemes # pylint: disable=global-statement
     current_date = date.today()
     current_date = current_date.strftime("%B %d %Y")
     start_time = time.time()
@@ -103,36 +106,41 @@ def main(**kwargs):
     use_cuda = kwargs['use_cuda']                   # if gpu exists default is true
     project = kwargs['project']                     # path to project folder
     vocoder_type = kwargs['vocoder']                # vocoder type, default is GL
-    vocoder_model_file = ""                         # path to vocoder model file
-    vocoder_config = ""                             # path to vocoder config file
     use_gst = kwargs['use_gst']                     # use style_wave for prosody
     style_dict = kwargs['style_input']              # use style_wave for prosody
-    speakers_json = kwargs['speaker_config']        # has to be the speakers file
-    speaker_name = kwargs['speaker_name']           # name of the selected speaker
+    speaker_id = kwargs['speaker_id']               # name of the selected speaker
     sentence_file = kwargs['sentence_file']         # path to file if generate from file
-    
-    
+
     batched_vocoder = True
-    
+
+    # load speakers
+    speakers_file_path = Path(project, "speakers.json")
+    if speakers_file_path.is_file():
+        speaker_data = json.load(open(speakers_file_path, 'r'))
+        num_speakers = len(speaker_data)
+        #get the speaker id for selected speaker
+        if speaker_id >= num_speakers:
+            print('Speaker ID outside of number of speakers range. Using default 0.')
+            speaker_id = 0
+            speaker_name = [speaker for speaker, id in speaker_data.items() if speaker_id == id][0]
+        else:
+            speaker_name = [speaker for speaker, id in speaker_data.items() if speaker_id == id][0]
+    else:
+        speaker_name = 'Default'
+        num_speakers = 0
+        speaker_id = None
+
     # create output directory if it doesn't exist
     out_path = str(Path(project, 'output', current_date, speaker_name))
     os.makedirs(out_path, exist_ok=True)
-    
+
     # load the config
     config_path = Path(project, "config.json")
     C = load_config(config_path)
-    #C.forward_attn_mask = True
 
-    if use_gst: 
+    if use_gst:
         if style_dict is not None:
             style_input = style_dict
-        else:
-            if speaker_name != 'Default':
-                prosody_waves = glob(str(Path(C.datasets[0]['path'], speaker_name, '/*/*.wav')))
-            else:
-                prosody_waves = glob(str(Path(C.datasets[0]['path'], '/*/*.wav')))
-            style_wav_id = random.randrange(0, len(prosody_waves), 1)
-            style_input = prosody_waves[style_wav_id]
     else:
         style_input = None
 
@@ -142,26 +150,16 @@ def main(**kwargs):
     # if the vocabulary was passed, replace the default
     if 'characters' in C.keys():
         symbols, phonemes = make_symbols(**C.characters)
-
-
-    # load speakers
-    speaker_id = None
-    if speakers_json != '':
-        speakers = json.load(open(speakers_json, 'r'))
-        num_speakers = len(speakers)
-        #get the speaker id for selected speaker
-        speaker_id = [id for speaker, id in speakers.items() if speaker_name in speaker][0]
-    else:
-        num_speakers = 0
+        
 
     # find the tts model file in project folder
     try:
         tts_model_file = glob(str(Path(project, '*.pth.tar')))
         if not tts_model_file:
-            raise FileNotFoundError('[!] TTS Model not found in path: "{}"'.format(project))
+            raise FileNotFoundError
         model_path = tts_model_file[0]
     except FileNotFoundError:
-        raise
+        print('[!] TTS Model not found in path: "{}"'.format(project))
 
     # load the model
     num_chars = len(phonemes) if C.use_phonemes else len(symbols)
@@ -169,41 +167,32 @@ def main(**kwargs):
 
     # if gpu is not available use cpu
     model, state = load_checkpoint(model, model_path, use_cuda=use_cuda)
-    # if not use_cuda:
-    #     cp = torch.load(model_path, map_location=torch.device('cpu'))
-    # else:
-    #     cp = torch.load(model_path)
 
-    # model.load_state_dict(cp['model'])
-    #print(model)
     model.decoder.max_decoder_steps = 2000
-    
+
     model.eval()
     print(' > Model step:', state['step'])
-    # if use_cuda:
-    #     model.cuda()
-    # model.decoder.set_r(cp['r'])
+    print(' > Model r: ', state['r'])
 
     # load vocoder
     if vocoder_type is 'MelGAN':
         try:
             model_file = glob(str(Path(project, 'vocoder/*.pth.tar')))
-            print(model_file[0])
-            vocoder, ap_vocoder = load_melgan(str(Path('TTS')),
-                                              str(model_file[0]),
-                                              str(Path(project, 'vocoder/config.json')),
-                                              use_cuda)
-        except FileNotFoundError:
-            if not model_file:
-                raise FileNotFoundError('[!] Vocoder Model not found in path: "{}"'.format(project))
+            vocoder, ap_vocoder = load_vocoder(str(Path('TTS')),
+                                               str(model_file[0]),
+                                               str(Path(project, 'vocoder/config.json')),
+                                               use_cuda)
+        except Exception:
+            print('[!] Error loading vocoder: "{}"'.format(project))
+            sys.exit(0)
 
     elif vocoder_type is 'WaveRNN':
         try:
-            model_file = glob(str(Path(project, '*.pkl')))
-            vocoder, ap_vocoder = load_melgan(str(Path('TTS')), str(model_file[0]), str(Path(project, 'config.yml')), use_cuda)
-        except FileNotFoundError:
-            if not model_file:
-                raise FileNotFoundError('[!] Vocoder Model not found in path: "{}"'.format(project))
+            model_file = glob(str(Path(project, 'vocoder/*.pkl')))
+            vocoder, ap_vocoder = load_vocoder(str(Path('TTS')), str(model_file[0]), str(Path(project, 'config.yml')), use_cuda)
+        except Exception:
+            print('[!] Error loading vocoder: "{}"'.format(project))
+            sys.exit(0)
     else:
         vocoder, ap_vocoder = None, None
 
@@ -230,7 +219,6 @@ def main(**kwargs):
         
         # if sentence was split in sub-sentences -> iterate over them
         for sentence in tts_sentence:
-            print(sentence)
             # synthesize voice
             _, _, _, wav = tts(model,
                                vocoder,
@@ -262,3 +250,50 @@ def main(**kwargs):
         end_time = time.time()
         print(" > Run-time: {}".format(end_time - start_time))
         print(" > Saving output to {}\n".format(out_path))
+
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--text',
+                        type=str,
+                        required=True,
+                        help='Text to generate speech.')
+    parser.add_argument('--project_path',
+                        type=str,
+                        required=True,
+                        help='Path to model')
+    parser.add_argument('--use_gst',
+                        type=bool,
+                        help='Use Global Style Tokens.',
+                        default=False)
+    parser.add_argument('--use_cuda',
+                        type=bool,
+                        help='Run model on CUDA.',
+                        default=False)
+    parser.add_argument('--style_input',
+                        type=bool,
+                        help='Use style input.',
+                        default=False)
+    parser.add_argument('--vocoder_type',
+                        type=str,
+                        help='Vocoder Type -> Choices: [Griffin-Lim, WaveRNN, MelGAN].',
+                        default="MelGAN")
+    parser.add_argument('--speaker_id',
+                        type=int,
+                        help='Select speaker by ID.',
+                        default=0)
+    parser.add_argument('--sentence_file',
+                        type=str,
+                        help='Path to text file to generate speech from.',
+                        default="")
+    args = parser.parse_args()
+
+    main(text=args.text,
+         use_cuda=args.use_cuda,
+         use_gst=args.use_gst,
+         style_input=args.style_input,
+         project=args.project_path,
+         speaker_id=args.speaker_id,
+         vocoder=args.vocoder_type,
+         sentence_file=args.sentence_file)

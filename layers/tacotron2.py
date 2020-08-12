@@ -71,8 +71,8 @@ class Encoder(nn.Module):
             o = layer(o)
         o = o.transpose(1, 2)
         o = nn.utils.rnn.pack_padded_sequence(o,
-                                            input_lengths,
-                                            batch_first=True)
+                                              input_lengths,
+                                              batch_first=True)
         self.lstm.flatten_parameters()
         o, _ = self.lstm(o)
         o, _ = nn.utils.rnn.pad_packed_sequence(o, batch_first=True)
@@ -217,13 +217,13 @@ class Decoder(nn.Module):
         self.query, self.attention_rnn_cell_state = self.attention_rnn(
             query_input, (self.query, self.attention_rnn_cell_state))
         self.query = F.dropout(self.query, self.p_attention_dropout,
-                            self.training)
+                               self.training)
         self.attention_rnn_cell_state = F.dropout(
             self.attention_rnn_cell_state, self.p_attention_dropout,
             self.training)
         # B x D_en
         self.context = self.attention(self.query, self.inputs,
-                                    self.processed_inputs, self.mask)
+                                      self.processed_inputs, self.mask)
         # B x (D_en + D_attn_rnn)
         decoder_rnn_input = torch.cat((self.query, self.context), -1)
         # self.decoder_hidden and self.decoder_cell: B x D_decoder_rnn
@@ -233,7 +233,7 @@ class Decoder(nn.Module):
                                         self.p_decoder_dropout, self.training)
         # B x (D_decoder_rnn + D_en)
         decoder_hidden_context = torch.cat((self.decoder_hidden, self.context),
-                                        dim=1)
+                                           dim=1)
         # B x (self.r * self.frame_dim)
         decoder_output = self.linear_projection(decoder_hidden_context)
         # B x (D_decoder_rnn + (self.r * self.frame_dim))

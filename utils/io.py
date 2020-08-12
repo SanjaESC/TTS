@@ -37,7 +37,6 @@ def copy_config_file(config_file, out_path, new_fields):
 
 
 def load_checkpoint(model, checkpoint_path, use_cuda=False):
-    state = torch.load(checkpoint_path, map_location=torch.device('cpu'))
     if not use_cuda:
         state = torch.load(checkpoint_path, map_location=torch.device('cpu'))
     else:

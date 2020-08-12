@@ -363,11 +363,11 @@ def check_config(c):
 
     # multi-speaker
     _check_argument('use_speaker_embedding', c, restricted=True, val_type=bool)
-    
+
     # GST
     _check_argument('use_gst', c, restricted=True, val_type=bool)
-    _check_argument('style_wav_for_test', c, restricted=True, val_type=str)
     _check_argument('gst', c, restricted=True, val_type=dict)
+    _check_argument('gst_style_input', c['gst'], restricted=True, val_type=str)
     _check_argument('gst_embedding_dim', c['gst'], restricted=True, val_type=int, min_val=1)
     _check_argument('gst_num_heads', c['gst'], restricted=True, val_type=int, min_val=1)
     _check_argument('gst_style_tokens', c['gst'], restricted=True, val_type=int, min_val=1)
