@@ -104,6 +104,7 @@ setup(
         "attrdict",
         "tensorboardX",
         "matplotlib",
+        "num2words",
         "Pillow",
         "flask",
         "tqdm",
