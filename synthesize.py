@@ -110,6 +110,7 @@ def main(**kwargs):
     style_dict = kwargs['style_input']              # use style_wave for prosody
     speaker_id = kwargs['speaker_id']               # name of the selected speaker
     sentence_file = kwargs['sentence_file']         # path to file if generate from file
+    out_path = kwargs['out_path']                   # path to save the output wav
 
     batched_vocoder = True
 
@@ -129,10 +130,6 @@ def main(**kwargs):
         speaker_name = 'Default'
         num_speakers = 0
         speaker_id = None
-
-    # create output directory if it doesn't exist
-    out_path = str(Path(project, 'output', current_date, speaker_name))
-    os.makedirs(out_path, exist_ok=True)
 
     # load the config
     config_path = Path(project, "config.json")
@@ -243,14 +240,22 @@ def main(**kwargs):
         file_name = "_".join([str(current_time), file_name])
         file_name = file_name.translate(
             str.maketrans('', '', string.punctuation.replace('_', ''))) + '.wav'
-        file_out_path = os.path.join(out_path, file_name)
+
+        if out_path == "":
+            out_dir = str(Path(project, 'output', current_date, speaker_name))
+            out_path = os.path.join(out_dir, file_name)
+        else:
+            out_dir = os.path.dirname(out_path)
+
+        # create output directory if it doesn't exist
+        if not os.path.isdir(out_dir):
+            os.makedirs(out_dir, exist_ok=True)
 
         # save generated wav to disk
-        ap.save_wav(wav, file_out_path)
+        ap.save_wav(wav, out_path)
         end_time = time.time()
         print(" > Run-time: {}".format(end_time - start_time))
         print(" > Saving output to {}\n".format(out_path))
-
 
 
 if __name__ == "__main__":
@@ -287,6 +292,10 @@ if __name__ == "__main__":
                         type=str,
                         help='Path to text file to generate speech from.',
                         default="")
+    parser.add_argument('--out_path',
+                        type=str,
+                        help='Path to save final wav file.',
+                        default="")
     args = parser.parse_args()
 
     main(text=args.text,
@@ -296,4 +305,5 @@ if __name__ == "__main__":
          project=args.project_path,
          speaker_id=args.speaker_id,
          vocoder=args.vocoder_type,
-         sentence_file=args.sentence_file)
+         sentence_file=args.sentence_file,
+         out_path=args.out_path)
