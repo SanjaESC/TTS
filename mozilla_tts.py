@@ -38,7 +38,8 @@ def synthesize_tts(text,
                             project=project,
                             speaker_id=idx,
                             vocoder=vocoder_type,
-                            sentence_file=sentence_file)
+                            sentence_file=sentence_file,
+                            out_path="")
 
     status, stop_threads = True, False
 
